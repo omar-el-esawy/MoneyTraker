@@ -7,7 +7,10 @@ class MoneyLogic {
     _sources.clear();
     for (var entry in sources) {
       entry.forEach((name, amount) {
-        _sources.add(MoneySource(name: name, amount: amount));
+        _sources.add(MoneySource(
+          name: name,
+          amount: amount,
+        ));
       });
     }
   }

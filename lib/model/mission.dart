@@ -1,15 +1,16 @@
 import 'package:flutter/material.dart';
 
 class Mission {
-  final String id;
+  final int? id; // Nullable for auto-increment
   final String name;
   final double targetAmount;
   final DateTime startDate;
   final DateTime endDate;
   double spentAmount;
 
+  // Constructor with id (used for database operations)
   Mission({
-    required this.id,
+    this.id,
     required this.name,
     required this.targetAmount,
     required this.startDate,
@@ -17,11 +18,20 @@ class Mission {
     this.spentAmount = 0.0,
   });
 
+  // Constructor without id (used for creating new missions)
+  Mission.create({
+    required this.name,
+    required this.targetAmount,
+    required this.startDate,
+    required this.endDate,
+    this.spentAmount = 0.0,
+  }) : id = null;
+
   double get remainingAmount => targetAmount - spentAmount;
 
   bool get isOverTarget => remainingAmount < 0;
 
-  Map<String, dynamic> toJson() => {
+  Map<String, dynamic> toMap() => {
         'id': id,
         'name': name,
         'targetAmount': targetAmount,
@@ -30,12 +40,12 @@ class Mission {
         'spentAmount': spentAmount,
       };
 
-  factory Mission.fromJson(Map<String, dynamic> json) => Mission(
-        id: json['id'],
-        name: json['name'],
-        targetAmount: json['targetAmount'],
-        startDate: DateTime.parse(json['startDate']),
-        endDate: DateTime.parse(json['endDate']),
-        spentAmount: json['spentAmount'],
+  factory Mission.fromMap(Map<String, dynamic> map) => Mission(
+        id: map['id'],
+        name: map['name'],
+        targetAmount: map['targetAmount'],
+        startDate: DateTime.parse(map['startDate']),
+        endDate: DateTime.parse(map['endDate']),
+        spentAmount: map['spentAmount'],
       );
 }

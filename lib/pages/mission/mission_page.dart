@@ -34,9 +34,26 @@ class _MissionPageState extends State<MissionPage> {
     }
   }
 
+  void _saveMission() async {
+    if (_formKey.currentState!.validate()) {
+      _formKey.currentState!.save();
+      final mission = Mission(
+        name: _name,
+        targetAmount: _targetAmount,
+        startDate: _startDate,
+        endDate: _endDate,
+      );
+      if (widget.mission == null) {
+        await MoneyStorage().addMission(mission);
+      } else {
+        await MoneyStorage().updateMission(mission);
+      }
+      Navigator.pop(context);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    MoneyStorage moneyStorage = MoneyStorage();
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.mission == null ? 'Create Mission' : 'Edit Mission'),
@@ -72,24 +89,7 @@ class _MissionPageState extends State<MissionPage> {
               ),
               // ... Add date pickers for startDate and endDate ...
               ElevatedButton(
-                onPressed: () {
-                  if (_formKey.currentState!.validate()) {
-                    _formKey.currentState!.save();
-                    final mission = Mission(
-                      id: widget.mission?.id ?? DateTime.now().toString(),
-                      name: _name,
-                      targetAmount: _targetAmount,
-                      startDate: _startDate,
-                      endDate: _endDate,
-                    );
-                    if (widget.mission == null) {
-                      moneyStorage.addMission(mission);
-                    } else {
-                      moneyStorage.updateMission(mission);
-                    }
-                    Navigator.pop(context);
-                  }
-                },
+                onPressed: _saveMission,
                 child: Text(widget.mission == null ? 'Create' : 'Update'),
               ),
             ],

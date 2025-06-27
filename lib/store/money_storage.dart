@@ -1,182 +1,178 @@
-import 'dart:convert';
-import 'dart:io';
-
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import 'package:sqflite/sqflite.dart';
+import 'package:path/path.dart';
+import 'package:money_traker/model/mission.dart';
 import 'package:money_traker/model/money_source.dart';
 import 'package:money_traker/model/total_money_day.dart';
-import 'package:money_traker/model/mission.dart';
-
-typedef DirectoryProvider = Future<Directory> Function();
-typedef FileFactory       = File Function(String fullPath);
 
 class MoneyStorage {
-  MoneyStorage({
-    DirectoryProvider? directoryProvider,
-    FileFactory?       fileFactory,
-  })  : _dirProvider = directoryProvider ?? getApplicationDocumentsDirectory,
-        _fileFactory = fileFactory       ?? ((p) => File(p));
+  static final MoneyStorage _instance = MoneyStorage._internal();
+  static Database? _database;
 
-  // --------------------------------------------------------------------------
-  // Internals
-  // --------------------------------------------------------------------------
-  final DirectoryProvider _dirProvider;
-  final FileFactory       _fileFactory;
+  MoneyStorage._internal();
 
-  static const _sourcesFile = 'money_sources.json';
-  static const _historyFile = 'money_history.json';
+  factory MoneyStorage() => _instance;
 
-  Future<File> _file(String name) async {
-    final dir = await _dirProvider();
-    return _fileFactory(p.join(dir.path, name));
+  Future<Database> get database async {
+    if (_database != null) return _database!;
+    _database = await _initDatabase();
+    return _database!;
   }
 
-  // --------------------------------------------------------------------------
-  // Public API
-  // --------------------------------------------------------------------------
-  Future<void> saveMoneySources(List<MoneySource> sources) async {
-    final file = await _file(_sourcesFile);
-    final json = jsonEncode(
-      sources.map((e) => {'name': e.name, 'amount': e.amount}).toList(),
+  Future<Database> _initDatabase() async {
+    final dbPath = await getDatabasesPath();
+    final path = join(dbPath, 'money_traker.db');
+
+    return await openDatabase(
+      path,
+      version: 3, // Increment version for note column
+      onCreate: (db, version) async {
+        await db.execute('''
+          CREATE TABLE missions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            targetAmount REAL,
+            startDate TEXT,
+            endDate TEXT,
+            spentAmount REAL
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE money_sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            amount REAL
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE total_money_days (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT,
+            totalAmount REAL,
+            note TEXT
+          )
+        ''');
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 3) {
+          await db.execute('ALTER TABLE total_money_days ADD COLUMN note TEXT');
+        }
+        // Drop and recreate tables to fix schema issues (dev only, will erase data)
+        await db.execute('DROP TABLE IF EXISTS missions');
+        await db.execute('DROP TABLE IF EXISTS money_sources');
+        await db.execute('DROP TABLE IF EXISTS total_money_days');
+        await db.execute('''
+          CREATE TABLE missions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            targetAmount REAL,
+            startDate TEXT,
+            endDate TEXT,
+            spentAmount REAL
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE money_sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            amount REAL
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE total_money_days (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT,
+            totalAmount REAL,
+            note TEXT
+          )
+        ''');
+      },
     );
-    await file.writeAsString(json);
   }
 
-  Future<List<MoneySource>> loadMoneySources() async {
-    final file = await _file(_sourcesFile);
-    if (!await file.exists()) return [];
-    final data = jsonDecode(await file.readAsString()) as List<dynamic>;
-    print('Loaded money sources: $data');
-    return data
-        .map((e) => MoneySource(
-      name: e['name'].toString(),
-      amount: (e['amount'] as num).toDouble(),
-    ))
-        .toList();
+  // Mission CRUD
+  Future<int> addMission(Mission mission) async {
+    final db = await database;
+    final map = mission.toMap();
+    map.remove('id'); // Remove id for auto-increment
+    return await db.insert('missions', map);
   }
 
-  Future<void> updateMoneySourceAmount(
-      String sourceName, double newAmount) async {
-    final list = await loadMoneySources();
-    for (final s in list) {
-      if (s.name == sourceName) {
-        s.amount = newAmount;
-        break;
-      }
-    }
-    await saveMoneySources(list);
+  Future<List<Mission>> getMissions() async {
+    final db = await database;
+    final result = await db.query('missions');
+    return result.map((map) => Mission.fromMap(map)).toList();
   }
 
-  Future<void> deleteMoneySource(String sourceName) async {
-    final list = await loadMoneySources();
-    list.removeWhere((source) => source.name == sourceName);
-    await saveMoneySources(list);
-  }
-
-  Future<void> saveHistory(List<TotalMoneyDay> history) async {
-    final file = await _file(_historyFile);
-    final json = jsonEncode(
-      history
-          .map((e) => {
-        'date': e.date.toIso8601String(),
-        'totalAmount': e.totalAmount,
-      })
-          .toList(),
+  Future<void> updateMission(Mission mission) async {
+    final db = await database;
+    await db.update(
+      'missions',
+      mission.toMap(),
+      where: 'id = ?',
+      whereArgs: [mission.id],
     );
-    await file.writeAsString(json);
   }
 
-  Future<List<TotalMoneyDay>> loadHistory() async {
-    final file = await _file(_historyFile);
-    if (!await file.exists()) return [];
-    final data = jsonDecode(await file.readAsString()) as List<dynamic>;
-    print('Loaded history: $data');
-    List<TotalMoneyDay> history = data
-        .map((e) => TotalMoneyDay(
-      date: DateTime.parse(e['date'].toString()),
-      totalAmount: (e['totalAmount'] as num).toDouble(),
-    ))
-        .toList();
-
-    if (history.isEmpty) return history;
-
-    // Sort by date ascending
-    history.sort((a, b) => a.date.compareTo(b.date));
-
-    final last = history.last;
-    final today = DateTime.now();
-    final lastDay = DateTime(last.date.year, last.date.month, last.date.day);
-    final todayDay = DateTime(today.year, today.month, today.day);
-
-    DateTime fillDay = lastDay.add(const Duration(days: 1));
-    while (fillDay.isBefore(todayDay) || fillDay.isAtSameMomentAs(todayDay)) {
-      history.add(TotalMoneyDay(date: fillDay, totalAmount: last.totalAmount));
-      fillDay = fillDay.add(const Duration(days: 1));
-    }
-
-    return history;
+  Future<void> deleteMission(String id) async {
+    final db = await database;
+    await db.delete('missions', where: 'id = ?', whereArgs: [int.parse(id)]);
   }
 
-  Future<void> updateTotalMoneyOfDay(
-      DateTime date, double newTotalAmount) async {
-    final hist = await loadHistory();
-    var found = false;
-    for (final h in hist) {
-      if (_sameDay(h.date, date)) {
-        h.totalAmount = newTotalAmount;
-        found = true;
-        break;
-      }
-    }
-    if (!found) {
-      hist.add(TotalMoneyDay(date: date, totalAmount: newTotalAmount));
-    }
-    await saveHistory(hist);
+  // MoneySource CRUD
+  Future<int> addMoneySource(MoneySource source) async {
+    final db = await database;
+    final map = source.toMap();
+    map.remove('id'); // Remove id for auto-increment
+    return await db.insert('money_sources', map);
   }
 
-  bool _sameDay(DateTime a, DateTime b) =>
-      a.year == b.year && a.month == b.month && a.day == b.day;
-
-  // --------------------------------------------------------------------------
-  // Mission Storage
-  // --------------------------------------------------------------------------
-  final List<Mission> _missions = [];
-
-  List<Mission> get missions => _missions;
-
-  void addMission(Mission mission) {
-    _missions.add(mission);
-    saveMissions();
+  Future<List<MoneySource>> getMoneySources() async {
+    final db = await database;
+    final result = await db.query('money_sources');
+    return result.map((map) => MoneySource.fromMap(map)).toList();
   }
 
-  void updateMission(Mission updatedMission) {
-    final index = _missions.indexWhere((m) => m.id == updatedMission.id);
-    if (index != -1) {
-      _missions[index] = updatedMission;
-      saveMissions();
-    }
+  Future<void> updateMoneySource(MoneySource source) async {
+    final db = await database;
+    await db.update(
+      'money_sources',
+      source.toMap(),
+      where: 'id = ?',
+      whereArgs: [source.id],
+    );
   }
 
-  void deleteMission(String missionId) {
-    _missions.removeWhere((m) => m.id == missionId);
-    saveMissions();
+  Future<void> deleteMoneySource(String id) async {
+    final db = await database;
+    await db.delete('money_sources', where: 'id = ?', whereArgs: [int.parse(id)]);
   }
 
-  void saveMissions() {
-    // Save missions to persistent storage (e.g., SharedPreferences or a database)
-    // ...existing code for saving...
+  // TotalMoneyDay CRUD
+  Future<int> addTotalMoneyDay(TotalMoneyDay day) async {
+    final db = await database;
+    final map = day.toMap();
+    map.remove('id'); // Remove id for auto-increment
+    return await db.insert('total_money_days', map);
   }
 
-  void loadMissions() {
-    // Load missions from persistent storage
-    // ...existing code for loading...
+  Future<List<TotalMoneyDay>> getTotalMoneyDays() async {
+    final db = await database;
+    final result = await db.query('total_money_days');
+    return result.map((map) => TotalMoneyDay.fromMap(map)).toList();
   }
 
-  void updateSpentAmount(String missionId, double amount) {
-    final mission = _missions.firstWhere((m) => m.id == missionId, orElse: () => null as Mission);
-    if (mission != null) {
-      mission.spentAmount += amount;
-      saveMissions();
-    }
+  Future<void> updateTotalMoneyDay(TotalMoneyDay day) async {
+    final db = await database;
+    await db.update(
+      'total_money_days',
+      day.toMap(),
+      where: 'id = ?',
+      whereArgs: [day.id],
+    );
+  }
+
+  Future<void> deleteTotalMoneyDay(String id) async {
+    final db = await database;
+    await db.delete('total_money_days', where: 'id = ?', whereArgs: [int.parse(id)]);
   }
 }

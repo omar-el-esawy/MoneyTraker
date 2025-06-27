@@ -23,6 +23,7 @@ class MyApp extends StatelessWidget {
           secondary: AppConstants.secondaryColor,
           background: AppConstants.backgroundColor,
           error: AppConstants.errorColor,
+          surface: AppConstants.secondaryColor,
         ),
         scaffoldBackgroundColor: AppConstants.backgroundColor,
         textTheme: GoogleFonts.latoTextTheme(
