@@ -13,39 +13,82 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final base = ThemeData(
+      useMaterial3: true,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: AppConstants.primaryColor,
+        primary: AppConstants.primaryColor,
+        secondary: AppConstants.primaryLight,
+        surface: AppConstants.surfaceColor,
+        error: AppConstants.errorColor,
+      ),
+      scaffoldBackgroundColor: AppConstants.backgroundColor,
+      dividerColor: AppConstants.dividerColor,
+    );
+
     return MaterialApp(
       title: AppConstants.appTitle,
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: AppConstants.primaryColor,
-          primary: AppConstants.primaryColor,
-          secondary: AppConstants.secondaryColor,
-          background: AppConstants.backgroundColor,
-          error: AppConstants.errorColor,
-          surface: AppConstants.secondaryColor,
+      theme: base.copyWith(
+        textTheme: GoogleFonts.interTextTheme(base.textTheme).copyWith(
+          headlineLarge: GoogleFonts.inter(fontSize: 32, fontWeight: FontWeight.w700, color: AppConstants.textPrimary),
+          headlineMedium: GoogleFonts.inter(fontSize: 24, fontWeight: FontWeight.w600, color: AppConstants.textPrimary),
+          titleLarge: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w600, color: AppConstants.textPrimary),
+          titleMedium: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w600, color: AppConstants.textPrimary),
+          bodyLarge: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w400, color: AppConstants.textPrimary),
+          bodyMedium: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w400, color: AppConstants.textSecondary),
+          bodySmall: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w400, color: AppConstants.textTertiary),
+          labelLarge: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w600, color: AppConstants.textPrimary),
+          labelSmall: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w500, color: AppConstants.textSecondary),
         ),
-        scaffoldBackgroundColor: AppConstants.backgroundColor,
-        textTheme: GoogleFonts.latoTextTheme(
-          Theme.of(context).textTheme.copyWith(
-            displayLarge: GoogleFonts.lato(fontSize: 48, fontWeight: FontWeight.bold),
-            displayMedium: GoogleFonts.lato(fontSize: 36, fontWeight: FontWeight.bold),
-            displaySmall: GoogleFonts.lato(fontSize: 28, fontWeight: FontWeight.w600),
-            headlineLarge: GoogleFonts.lato(fontSize: 24, fontWeight: FontWeight.bold),
-            headlineMedium: GoogleFonts.lato(fontSize: 20, fontWeight: FontWeight.w600),
-            headlineSmall: GoogleFonts.lato(fontSize: 18, fontWeight: FontWeight.w600),
-            titleLarge: GoogleFonts.lato(fontSize: 18, fontWeight: FontWeight.w500),
-            titleMedium: GoogleFonts.lato(fontSize: 16, fontWeight: FontWeight.w500),
-            titleSmall: GoogleFonts.lato(fontSize: 14, fontWeight: FontWeight.w500),
-            bodyLarge: GoogleFonts.lato(fontSize: 16),
-            bodyMedium: GoogleFonts.lato(fontSize: 14),
-            bodySmall: GoogleFonts.lato(fontSize: 12),
-            labelLarge: GoogleFonts.lato(fontSize: 14, fontWeight: FontWeight.w600),
-            labelMedium: GoogleFonts.lato(fontSize: 12, fontWeight: FontWeight.w600),
-            labelSmall: GoogleFonts.lato(fontSize: 10, fontWeight: FontWeight.w600),
+        appBarTheme: AppBarTheme(
+          backgroundColor: AppConstants.backgroundColor,
+          foregroundColor: AppConstants.textPrimary,
+          elevation: 0,
+          centerTitle: false,
+          titleTextStyle: GoogleFonts.inter(
+            fontSize: 26,
+            fontWeight: FontWeight.w700,
+            color: AppConstants.textPrimary,
           ),
         ),
-        useMaterial3: true,
+        cardTheme: CardThemeData(
+          color: AppConstants.surfaceColor,
+          elevation: 0,
+          margin: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: AppConstants.dividerColor, width: 1),
+          ),
+        ),
+        bottomSheetTheme: const BottomSheetThemeData(
+          backgroundColor: AppConstants.surfaceColor,
+          surfaceTintColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(24),
+              topRight: Radius.circular(24),
+            ),
+          ),
+        ),
+        dialogTheme: DialogThemeData(
+          backgroundColor: AppConstants.surfaceColor,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: AppConstants.backgroundColor,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: Color(0xFFE8E8E8)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: AppConstants.primaryColor, width: 2),
+          ),
+          labelStyle: const TextStyle(color: AppConstants.textSecondary),
+          hintStyle: const TextStyle(color: AppConstants.textTertiary),
+        ),
       ),
       home: const SplashToHome(),
     );

@@ -1,30 +1,44 @@
 class MoneySource {
-  final int? id; // Nullable for auto-increment
+  final int? id;
   final String name;
-  double amount;
+  final double amount;
 
-  // Constructor with id (used for database operations)
   MoneySource({
     this.id,
     required this.name,
     required this.amount,
   });
 
-  // Constructor without id (used for creating new money sources)
   MoneySource.create({
     required this.name,
     required this.amount,
   }) : id = null;
 
-  Map<String, dynamic> toMap() => {
-        'id': id,
-        'name': name,
-        'amount': amount,
-      };
+  MoneySource copyWith({
+    int? id,
+    String? name,
+    double? amount,
+  }) {
+    return MoneySource(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      amount: amount ?? this.amount,
+    );
+  }
 
-  factory MoneySource.fromMap(Map<String, dynamic> map) => MoneySource(
-        id: map['id'],
-        name: map['name'],
-        amount: map['amount'],
-      );
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'name': name,
+      'amount': amount,
+    };
+  }
+
+  factory MoneySource.fromMap(Map<String, dynamic> map) {
+    return MoneySource(
+      id: map['id'],
+      name: map['name'],
+      amount: map['amount'],
+    );
+  }
 }

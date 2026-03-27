@@ -3,6 +3,8 @@ import 'package:money_traker/constants/app_constants.dart';
 import 'package:money_traker/model/mission.dart';
 import 'package:money_traker/pages/total_money/total_money_page.dart';
 import 'package:money_traker/pages/history/history_page.dart';
+import 'package:money_traker/pages/insights/insights_page.dart';
+import 'package:money_traker/pages/settings/settings_page.dart';
 import 'package:money_traker/store/money_storage.dart';
 import 'package:money_traker/model/money_source.dart';
 import 'package:money_traker/model/total_money_day.dart';
@@ -44,54 +46,8 @@ class _HomePageState extends State<HomePage> {
     try {
       final loadedSources = await _storage.getMoneySources();
       if (loadedSources.isEmpty) {
-        _sources = [
-          MoneySource.create(name: 'Cash at home', amount: 18900.0),
-          MoneySource.create(name: 'CIB', amount: 13.01),
-          MoneySource.create(name: 'HSBC', amount: 392.30),
-          MoneySource.create(name: 'I loan', amount: 6000.0),
-          MoneySource.create(name: 'etisalat', amount: 891.32),
-          MoneySource.create(name: 'Money on my hand', amount: 80),
-          MoneySource.create(name: 'Hossam', amount: 762.0),
-          MoneySource.create(name: 'e&Mashreq', amount: 606.15),
-        ];
-        for (var source in _sources) {
-          await _storage.addMoneySource(source);
-        }
-
-        final now = DateTime.now();
-        final initialHistory = <TotalMoneyDay>[
-          TotalMoneyDay.create(
-            date: now.subtract(const Duration(days: 6)),
-            totalAmount: 30109.64,
-          ),
-          TotalMoneyDay.create(
-            date: now.subtract(const Duration(days: 5)),
-            totalAmount: 29892.12,
-          ),
-          TotalMoneyDay.create(
-            date: now.subtract(const Duration(days: 4)),
-            totalAmount: 29802.12,
-          ),
-          TotalMoneyDay.create(
-            date: now.subtract(const Duration(days: 3)),
-            totalAmount: 29820.22,
-          ),
-          TotalMoneyDay.create(
-            date: now.subtract(const Duration(days: 2)),
-            totalAmount: 29213.21,
-          ),
-          TotalMoneyDay.create(
-            date: now.subtract(const Duration(days: 1)),
-            totalAmount: 27644.78,
-          ),
-          TotalMoneyDay.create(
-            date: now,
-            totalAmount: _sources.fold(0.0, (sum, e) => sum + e.amount),
-          ),
-        ];
-        for (var day in initialHistory) {
-          await _storage.addTotalMoneyDay(day);
-        }
+        // No static/demo data: start with an empty state.
+        _sources = [];
       } else {
         _sources = loadedSources;
       }
@@ -142,11 +98,10 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _deleteMoneySource(int id) async {
-    setState(() {
-      _sources.removeWhere((source) => source.id == id);
-    });
+    _sources.removeWhere((source) => source.id == id);
     await _storage.deleteMoneySource(id.toString());
     await _addOrUpdateTodayHistory();
+    setState(() {});
   }
 
   double _getTotalMoney() {
@@ -200,6 +155,7 @@ class _HomePageState extends State<HomePage> {
         id: existingDay.id,
         date: today,
         totalAmount: total,
+        note: existingDay.note,
       );
       await _storage.updateTotalMoneyDay(updatedDay);
     }
@@ -212,6 +168,71 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       _mission = mission;
     });
+  }
+
+  Future<void> _reloadAllData() async {
+    setState(() {
+      _isLoading = true;
+    });
+    await _initData();
+  }
+
+  Future<void> _reloadHistoryDaysOnly() async {
+    try {
+      final days = await _storage.getTotalMoneyDays();
+      if (!mounted) return;
+      setState(() {
+        _historyDays = days;
+      });
+    } catch (e) {
+      // Ignore errors; history will refresh on full reload.
+    }
+  }
+
+  Future<void> _adjustMoneySourceByName(String name, double delta) async {
+    final idx = _sources.indexWhere((s) => s.name == name);
+    if (idx == -1) return;
+    final src = _sources[idx];
+    if (src.id == null) return;
+
+    final updated = src.copyWith(amount: src.amount + delta);
+    setState(() {
+      _sources[idx] = updated;
+    });
+    await _storage.updateMoneySource(updated);
+    await _addOrUpdateTodayHistory();
+  }
+
+  Future<void> _transferBetweenSources({
+    required String from,
+    required String to,
+    required double amount,
+  }) async {
+    if (from == to) return;
+    if (amount <= 0) return;
+
+    final fromIdx = _sources.indexWhere((s) => s.name == from);
+    final toIdx = _sources.indexWhere((s) => s.name == to);
+    if (fromIdx == -1 || toIdx == -1) return;
+
+    final fromSrc = _sources[fromIdx];
+    final toSrc = _sources[toIdx];
+    if (fromSrc.id == null || toSrc.id == null) return;
+
+    // Prevent negative values.
+    if (fromSrc.amount < amount) return;
+
+    final updatedFrom = fromSrc.copyWith(amount: fromSrc.amount - amount);
+    final updatedTo = toSrc.copyWith(amount: toSrc.amount + amount);
+
+    setState(() {
+      _sources[fromIdx] = updatedFrom;
+      _sources[toIdx] = updatedTo;
+    });
+
+    await _storage.updateMoneySource(updatedFrom);
+    await _storage.updateMoneySource(updatedTo);
+    await _addOrUpdateTodayHistory();
   }
 
   @override
@@ -239,7 +260,7 @@ class _HomePageState extends State<HomePage> {
             (s) => s.name == name,
             orElse: () => MoneySource.create(name: '', amount: 0.0),
           );
-          if (source != null && source.id != null) {
+          if (source.id != null) {
             _editMoneySource(source.id!, newName, newAmount);
           }
         },
@@ -248,38 +269,60 @@ class _HomePageState extends State<HomePage> {
             (s) => s.name == name,
             orElse: () => MoneySource.create(name: '', amount: 0.0),
           );
-          if (source != null && source.id != null) {
+          if (source.id != null) {
             _deleteMoneySource(source.id!);
           }
         },
+        onQuickAdd: (name, delta) => _adjustMoneySourceByName(name, delta),
+        onQuickSubtract: (name, delta) => _adjustMoneySourceByName(name, -delta),
+        onTransfer: (from, to, amount) => _transferBetweenSources(from: from, to: to, amount: amount),
         mission: _mission,
         onAddMission: _addMission,
       ),
       HistoryPage(historyDays: _historyDays),
+      const InsightsPage(),
+      SettingsPage(onDataImported: _reloadAllData),
     ];
 
     return Scaffold(
       body: SafeArea(child: pages[_selectedIndex]),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
-        selectedItemColor: Colors.white,
-        // Selected icon color
-        unselectedItemColor: Colors.black,
-        // Unselected icon color
+        selectedItemColor: AppConstants.primaryColor,
+        // Selected icon/label color
+        unselectedItemColor: AppConstants.textTertiary,
+        // Unselected icon/label color
+        backgroundColor: AppConstants.surfaceColor,
+        type: BottomNavigationBarType.fixed,
         items: const [
           BottomNavigationBarItem(
             icon: FaIcon(FontAwesomeIcons.wallet),
             label: 'Total Money',
           ),
           BottomNavigationBarItem(
-            icon: FaIcon(FontAwesomeIcons.moneyCheckAlt),
+            icon: FaIcon(FontAwesomeIcons.moneyCheckDollar),
             label: 'History',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.insights),
+            label: 'Insights',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.settings),
+            label: 'Settings',
           ),
         ],
         onTap: (index) {
           setState(() {
             _selectedIndex = index;
           });
+
+          // History notes are edited inside HistoryPage and saved to DB.
+          // When leaving and returning, refresh the in-memory list so the UI
+          // reflects the latest saved notes without needing an app restart.
+          if (index == 1) {
+            _reloadHistoryDaysOnly();
+          }
         },
       ),
     );

@@ -1,10 +1,9 @@
 class TotalMoneyDay {
-  final int? id; // Nullable for auto-increment
+  final int? id;
   final DateTime date;
   final double totalAmount;
-  final String? note; // Optional note
+  final String? note;
 
-  // Constructor with id (used for database operations)
   TotalMoneyDay({
     this.id,
     required this.date,
@@ -12,24 +11,41 @@ class TotalMoneyDay {
     this.note,
   });
 
-  // Constructor without id (used for creating new total money days)
   TotalMoneyDay.create({
     required this.date,
     required this.totalAmount,
     this.note,
   }) : id = null;
 
-  Map<String, dynamic> toMap() => {
-        'id': id,
-        'date': date.toIso8601String(),
-        'totalAmount': totalAmount,
-        'note': note,
-      };
+  TotalMoneyDay copyWith({
+    int? id,
+    DateTime? date,
+    double? totalAmount,
+    String? note,
+  }) {
+    return TotalMoneyDay(
+      id: id ?? this.id,
+      date: date ?? this.date,
+      totalAmount: totalAmount ?? this.totalAmount,
+      note: note ?? this.note,
+    );
+  }
 
-  factory TotalMoneyDay.fromMap(Map<String, dynamic> map) => TotalMoneyDay(
-        id: map['id'],
-        date: DateTime.parse(map['date']),
-        totalAmount: map['totalAmount'],
-        note: map['note'],
-      );
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'date': date.toIso8601String(),
+      'totalAmount': totalAmount,
+      'note': note,
+    };
+  }
+
+  factory TotalMoneyDay.fromMap(Map<String, dynamic> map) {
+    return TotalMoneyDay(
+      id: map['id'],
+      date: DateTime.parse(map['date']),
+      totalAmount: map['totalAmount'],
+      note: map['note'],
+    );
+  }
 }

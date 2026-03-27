@@ -8,7 +8,8 @@ plugins {
 android {
     namespace = "com.example.money_traker"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // Use a known-installed NDK version to avoid corrupted/missing NDK installs.
+    ndkVersion = "29.0.13113456"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11

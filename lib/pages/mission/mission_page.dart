@@ -48,6 +48,7 @@ class _MissionPageState extends State<MissionPage> {
       } else {
         await MoneyStorage().updateMission(mission);
       }
+      if (!mounted) return;
       Navigator.pop(context);
     }
   }

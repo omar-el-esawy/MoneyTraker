@@ -1,51 +1,58 @@
-import 'package:flutter/material.dart';
-
 class Mission {
-  final int? id; // Nullable for auto-increment
+  final int? id;
   final String name;
   final double targetAmount;
   final DateTime startDate;
   final DateTime endDate;
-  double spentAmount;
 
-  // Constructor with id (used for database operations)
   Mission({
     this.id,
     required this.name,
     required this.targetAmount,
     required this.startDate,
     required this.endDate,
-    this.spentAmount = 0.0,
   });
 
-  // Constructor without id (used for creating new missions)
   Mission.create({
     required this.name,
     required this.targetAmount,
     required this.startDate,
     required this.endDate,
-    this.spentAmount = 0.0,
   }) : id = null;
 
-  double get remainingAmount => targetAmount - spentAmount;
+  Mission copyWith({
+    int? id,
+    String? name,
+    double? targetAmount,
+    DateTime? startDate,
+    DateTime? endDate,
+  }) {
+    return Mission(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      targetAmount: targetAmount ?? this.targetAmount,
+      startDate: startDate ?? this.startDate,
+      endDate: endDate ?? this.endDate,
+    );
+  }
 
-  bool get isOverTarget => remainingAmount < 0;
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'name': name,
+      'targetAmount': targetAmount,
+      'startDate': startDate.toIso8601String(),
+      'endDate': endDate.toIso8601String(),
+    };
+  }
 
-  Map<String, dynamic> toMap() => {
-        'id': id,
-        'name': name,
-        'targetAmount': targetAmount,
-        'startDate': startDate.toIso8601String(),
-        'endDate': endDate.toIso8601String(),
-        'spentAmount': spentAmount,
-      };
-
-  factory Mission.fromMap(Map<String, dynamic> map) => Mission(
-        id: map['id'],
-        name: map['name'],
-        targetAmount: map['targetAmount'],
-        startDate: DateTime.parse(map['startDate']),
-        endDate: DateTime.parse(map['endDate']),
-        spentAmount: map['spentAmount'],
-      );
+  factory Mission.fromMap(Map<String, dynamic> map) {
+    return Mission(
+      id: map['id'],
+      name: map['name'],
+      targetAmount: map['targetAmount'],
+      startDate: DateTime.parse(map['startDate']),
+      endDate: DateTime.parse(map['endDate']),
+    );
+  }
 }

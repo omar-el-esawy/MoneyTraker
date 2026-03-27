@@ -4,16 +4,23 @@ class AppConstants {
   static const String appTitle = 'Money Tracker';
   static const String homePageTitle = 'Home';
 
-  // Refined, soft, and modern color palette
-  static const Color primaryColor    = Color(0xFF4C5C68); // Soft Charcoal
-  static const Color secondaryColor  = Color(0xFF4C5C68); // Warm off-white (background)
-  static const Color backgroundColor = Color(0xFFF9F9F9); // Very soft gray
-  static const Color accentColor     = Color(0xFF84A59D); // Desaturated teal
-  static const Color errorColor      = Color(0xFFE07A5F); // Muted coral red
+  // Design system colors (light mode)
+  static const Color primaryColor = Color(0xFF1B5E20); // Deep Green
+  static const Color primaryLight = Color(0xFF4CAF50); // Green
+  static const Color primarySurface = Color(0xFFE8F5E9); // Very Light Green
 
-  // Font family
-  static const String fontFamily = 'Roboto'; // Still modern & clean
+  static const Color accentColor = Color(0xFF4CAF50); // Accent green
+  static const Color errorColor = Color(0xFFFF6B6B); // Soft red
 
-  // Asset paths
+  static const Color backgroundColor = Color(0xFFF8F9FA); // Off-white
+  static const Color surfaceColor = Color(0xFFFFFFFF);
+  static const Color dividerColor = Color(0xFFF0F0F0);
+
+  static const Color textPrimary = Color(0xFF1A1A2E);
+  static const Color textSecondary = Color(0xFF6B7280);
+  static const Color textTertiary = Color(0xFF9CA3AF);
+
+  static const String fontFamily = 'Inter';
+
   static const String splashImage = 'assets/money.png';
 }
