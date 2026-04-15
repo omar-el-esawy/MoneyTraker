@@ -6,6 +6,7 @@ import 'package:money_traker/model/total_money_day.dart';
 import 'package:money_traker/model/total_money_day_delta_entry.dart';
 import 'package:money_traker/model/tag.dart';
 import 'package:money_traker/model/goal.dart';
+import 'package:money_traker/model/money_source_change.dart';
 
 class MoneyStorage {
   static final MoneyStorage _instance = MoneyStorage._internal();
@@ -27,7 +28,7 @@ class MoneyStorage {
 
     return await openDatabase(
       path,
-      version: 7,
+      version: 8,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE missions (
@@ -100,6 +101,20 @@ class MoneyStorage {
         ''');
         await db.execute('CREATE INDEX idx_goals_active_createdAt ON goals(isActive, createdAt)');
         await db.execute('CREATE INDEX idx_goals_isMain ON goals(isMain)');
+
+        await db.execute('''
+          CREATE TABLE money_source_changes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sourceId INTEGER NOT NULL,
+            deltaAmount REAL NOT NULL,
+            resultingAmount REAL NOT NULL,
+            createdAt TEXT NOT NULL,
+            type TEXT NOT NULL,
+            note TEXT,
+            FOREIGN KEY(sourceId) REFERENCES money_sources(id) ON DELETE CASCADE
+          )
+        ''');
+        await db.execute('CREATE INDEX idx_source_changes_source_created ON money_source_changes(sourceId, createdAt)');
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         // IMPORTANT: Never drop tables here. Always migrate forward while keeping data.
@@ -183,6 +198,24 @@ class MoneyStorage {
             await db.execute('ALTER TABLE goals ADD COLUMN isMain INTEGER NOT NULL DEFAULT 0');
           }
           await db.execute('CREATE INDEX IF NOT EXISTS idx_goals_isMain ON goals(isMain)');
+        }
+
+        if (oldVersion < 8) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS money_source_changes (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              sourceId INTEGER NOT NULL,
+              deltaAmount REAL NOT NULL,
+              resultingAmount REAL NOT NULL,
+              createdAt TEXT NOT NULL,
+              type TEXT NOT NULL,
+              note TEXT,
+              FOREIGN KEY(sourceId) REFERENCES money_sources(id) ON DELETE CASCADE
+            )
+          ''');
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_source_changes_source_created ON money_source_changes(sourceId, createdAt)',
+          );
         }
       },
     );
@@ -296,7 +329,32 @@ class MoneyStorage {
 
   Future<void> deleteMoneySource(String id) async {
     final db = await database;
-    await db.delete('money_sources', where: 'id = ?', whereArgs: [int.parse(id)]);
+    final parsedId = int.parse(id);
+    await db.delete('money_source_changes', where: 'sourceId = ?', whereArgs: [parsedId]);
+    await db.delete('money_sources', where: 'id = ?', whereArgs: [parsedId]);
+  }
+
+  Future<int> addMoneySourceChange(MoneySourceChange change) async {
+    final db = await database;
+    final map = change.toMap();
+    map.remove('id');
+    return db.insert('money_source_changes', map);
+  }
+
+  Future<List<MoneySourceChange>> getMoneySourceChanges(int sourceId) async {
+    final db = await database;
+    final rows = await db.query(
+      'money_source_changes',
+      where: 'sourceId = ?',
+      whereArgs: [sourceId],
+      orderBy: 'createdAt DESC, id DESC',
+    );
+    return rows.map(MoneySourceChange.fromMap).toList();
+  }
+
+  Future<void> deleteMoneySourceChange(int changeId) async {
+    final db = await database;
+    await db.delete('money_source_changes', where: 'id = ?', whereArgs: [changeId]);
   }
 
   // TotalMoneyDay CRUD
@@ -395,6 +453,24 @@ class MoneyStorage {
   Future<void> deleteTag(int id) async {
     final db = await database;
     await db.delete('tags', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> renameTag({
+    required int id,
+    required String newName,
+  }) async {
+    final db = await database;
+    final normalized = newName.trim();
+    if (normalized.isEmpty) {
+      throw Exception('Tag name can\'t be empty');
+    }
+
+    await db.update(
+      'tags',
+      {'name': normalized},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 
   // ---------------- Delta entries ----------------
@@ -507,7 +583,7 @@ class MoneyStorage {
   }
 
   // ---------------- Backup ----------------
-  static const int backupSchemaVersion = 3;
+  static const int backupSchemaVersion = 4;
 
   Future<Map<String, dynamic>> exportBackupJson() async {
     final db = await database;
@@ -517,6 +593,7 @@ class MoneyStorage {
     final tags = await db.query('tags');
     final deltaEntries = await db.query('total_money_day_delta_entries');
     final goals = await db.query('goals');
+    final sourceChanges = await db.query('money_source_changes');
 
     return {
       'schemaVersion': backupSchemaVersion,
@@ -527,6 +604,7 @@ class MoneyStorage {
       'tags': tags,
       'total_money_day_delta_entries': deltaEntries,
       'goals': goals,
+      'money_source_changes': sourceChanges,
     };
   }
 
@@ -545,12 +623,14 @@ class MoneyStorage {
     final tags = (json['tags'] as List?)?.cast<Map>() ?? const [];
     final deltaEntries = (json['total_money_day_delta_entries'] as List?)?.cast<Map>() ?? const [];
     final goals = (json['goals'] as List?)?.cast<Map>() ?? const [];
+    final sourceChanges = (json['money_source_changes'] as List?)?.cast<Map>() ?? const [];
 
     final db = await database;
 
     await db.transaction((txn) async {
       if (replace) {
         await txn.delete('missions');
+        await txn.delete('money_source_changes');
         await txn.delete('money_sources');
         await txn.delete('total_money_days');
         await txn.delete('tags');
@@ -601,6 +681,14 @@ class MoneyStorage {
         await txn.insert(
           'goals',
           g.map((k, v) => MapEntry(k.toString(), v)),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+
+      for (final c in sourceChanges) {
+        await txn.insert(
+          'money_source_changes',
+          c.map((k, v) => MapEntry(k.toString(), v)),
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
       }

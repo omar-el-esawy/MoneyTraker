@@ -107,13 +107,7 @@ class _HistoryPageState extends State<HistoryPage> {
   }
 
   Future<void> _openDeltaTagging(int sortedIndex) async {
-    if (sortedIndex <= 0) {
-      // No previous day.
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No previous day to compare.')),
-      );
-      return;
-    }
+    if (sortedIndex < 0 || sortedIndex >= _historyDays.length) return;
 
     final day = _historyDays[sortedIndex];
     if (day.id == null) {
@@ -123,7 +117,9 @@ class _HistoryPageState extends State<HistoryPage> {
       return;
     }
 
-    final delta = dayDelta(_historyDays, sortedIndex);
+    // For the very first day there is no previous snapshot, so use its full
+    // total as the baseline delta to enable category tagging.
+    final delta = sortedIndex == 0 ? day.totalAmount : dayDelta(_historyDays, sortedIndex);
 
     await showModalBottomSheet<void>(
       context: context,

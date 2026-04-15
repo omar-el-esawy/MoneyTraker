@@ -7,6 +7,7 @@ import 'package:money_traker/pages/insights/insights_page.dart';
 import 'package:money_traker/pages/settings/settings_page.dart';
 import 'package:money_traker/store/money_storage.dart';
 import 'package:money_traker/model/money_source.dart';
+import 'package:money_traker/model/money_source_change.dart';
 import 'package:money_traker/model/total_money_day.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
@@ -70,10 +71,22 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _addMoneySource(String name, double amount) async {
     final newSource = MoneySource.create(name: name, amount: amount);
+    final insertedId = await _storage.addMoneySource(newSource);
+    final persistedSource = MoneySource(id: insertedId, name: name, amount: amount);
+
+    await _storage.addMoneySourceChange(
+      MoneySourceChange(
+        sourceId: insertedId,
+        deltaAmount: amount,
+        resultingAmount: amount,
+        createdAt: DateTime.now(),
+        type: MoneySourceChangeType.created,
+      ),
+    );
+
     setState(() {
-      _sources.add(newSource);
+      _sources.add(persistedSource);
     });
-    await _storage.addMoneySource(newSource);
     await _addOrUpdateTodayHistory();
   }
 
@@ -84,6 +97,7 @@ class _HomePageState extends State<HomePage> {
   ) async {
     final index = _sources.indexWhere((e) => e.id == id);
     if (index != -1) {
+      final oldSource = _sources[index];
       final updatedSource = MoneySource(
         id: id,
         name: newName,
@@ -93,6 +107,16 @@ class _HomePageState extends State<HomePage> {
         _sources[index] = updatedSource;
       });
       await _storage.updateMoneySource(updatedSource);
+      await _storage.addMoneySourceChange(
+        MoneySourceChange(
+          sourceId: id,
+          deltaAmount: newAmount - oldSource.amount,
+          resultingAmount: newAmount,
+          createdAt: DateTime.now(),
+          type: MoneySourceChangeType.edited,
+          note: oldSource.name == newName ? null : 'Renamed from ${oldSource.name}',
+        ),
+      );
       await _addOrUpdateTodayHistory();
     }
   }
@@ -200,6 +224,15 @@ class _HomePageState extends State<HomePage> {
       _sources[idx] = updated;
     });
     await _storage.updateMoneySource(updated);
+    await _storage.addMoneySourceChange(
+      MoneySourceChange(
+        sourceId: src.id!,
+        deltaAmount: delta,
+        resultingAmount: updated.amount,
+        createdAt: DateTime.now(),
+        type: delta >= 0 ? MoneySourceChangeType.add : MoneySourceChangeType.subtract,
+      ),
+    );
     await _addOrUpdateTodayHistory();
   }
 
@@ -232,6 +265,26 @@ class _HomePageState extends State<HomePage> {
 
     await _storage.updateMoneySource(updatedFrom);
     await _storage.updateMoneySource(updatedTo);
+    await _storage.addMoneySourceChange(
+      MoneySourceChange(
+        sourceId: fromSrc.id!,
+        deltaAmount: -amount,
+        resultingAmount: updatedFrom.amount,
+        createdAt: DateTime.now(),
+        type: MoneySourceChangeType.transferOut,
+        note: 'To ${toSrc.name}',
+      ),
+    );
+    await _storage.addMoneySourceChange(
+      MoneySourceChange(
+        sourceId: toSrc.id!,
+        deltaAmount: amount,
+        resultingAmount: updatedTo.amount,
+        createdAt: DateTime.now(),
+        type: MoneySourceChangeType.transferIn,
+        note: 'From ${fromSrc.name}',
+      ),
+    );
     await _addOrUpdateTodayHistory();
   }
 
@@ -254,6 +307,7 @@ class _HomePageState extends State<HomePage> {
     final pages = [
       TotalMoneyPage(
         moneySources: {for (var s in _sources) s.name: s.amount},
+        sourceIds: {for (var s in _sources.where((s) => s.id != null)) s.name: s.id!},
         onAddSource: _addMoneySource,
         onEditSource: (name, newName, newAmount) {
           final source = _sources.firstWhere(
@@ -286,44 +340,84 @@ class _HomePageState extends State<HomePage> {
 
     return Scaffold(
       body: SafeArea(child: pages[_selectedIndex]),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _selectedIndex,
-        selectedItemColor: AppConstants.primaryColor,
-        // Selected icon/label color
-        unselectedItemColor: AppConstants.textTertiary,
-        // Unselected icon/label color
-        backgroundColor: AppConstants.surfaceColor,
-        type: BottomNavigationBarType.fixed,
-        items: const [
-          BottomNavigationBarItem(
-            icon: FaIcon(FontAwesomeIcons.wallet),
-            label: 'Total Money',
+      bottomNavigationBar: SafeArea(
+        minimum: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+        child: Container(
+          decoration: BoxDecoration(
+            color: AppConstants.surfaceColor,
+            borderRadius: BorderRadius.circular(22),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.08),
+                blurRadius: 20,
+                offset: const Offset(0, 6),
+              ),
+            ],
           ),
-          BottomNavigationBarItem(
-            icon: FaIcon(FontAwesomeIcons.moneyCheckDollar),
-            label: 'History',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.insights),
-            label: 'Insights',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.settings),
-            label: 'Settings',
-          ),
-        ],
-        onTap: (index) {
-          setState(() {
-            _selectedIndex = index;
-          });
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(22),
+            child: NavigationBarTheme(
+              data: NavigationBarThemeData(
+                backgroundColor: AppConstants.surfaceColor,
+                labelTextStyle: WidgetStateProperty.resolveWith((states) {
+                  final selected = states.contains(WidgetState.selected);
+                  return TextStyle(
+                    fontSize: 12,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    color: selected ? AppConstants.primaryColor : AppConstants.textTertiary,
+                  );
+                }),
+                iconTheme: WidgetStateProperty.resolveWith((states) {
+                  final selected = states.contains(WidgetState.selected);
+                  return IconThemeData(
+                    color: selected ? AppConstants.primaryColor : AppConstants.textTertiary,
+                    size: selected ? 22 : 20,
+                  );
+                }),
+                indicatorColor: AppConstants.primarySurface,
+              ),
+              child: NavigationBar(
+                selectedIndex: _selectedIndex,
+                labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+                height: 68,
+                destinations: const [
+                  NavigationDestination(
+                    icon: FaIcon(FontAwesomeIcons.wallet),
+                    selectedIcon: FaIcon(FontAwesomeIcons.wallet),
+                    label: 'Total',
+                  ),
+                  NavigationDestination(
+                    icon: FaIcon(FontAwesomeIcons.moneyCheckDollar),
+                    selectedIcon: FaIcon(FontAwesomeIcons.moneyCheckDollar),
+                    label: 'History',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.insights_outlined),
+                    selectedIcon: Icon(Icons.insights),
+                    label: 'Insights',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.settings_outlined),
+                    selectedIcon: Icon(Icons.settings),
+                    label: 'Settings',
+                  ),
+                ],
+                onDestinationSelected: (index) {
+                  setState(() {
+                    _selectedIndex = index;
+                  });
 
-          // History notes are edited inside HistoryPage and saved to DB.
-          // When leaving and returning, refresh the in-memory list so the UI
-          // reflects the latest saved notes without needing an app restart.
-          if (index == 1) {
-            _reloadHistoryDaysOnly();
-          }
-        },
+                  // History notes are edited inside HistoryPage and saved to DB.
+                  // When leaving and returning, refresh the in-memory list so the UI
+                  // reflects the latest saved notes without needing an app restart.
+                  if (index == 1) {
+                    _reloadHistoryDaysOnly();
+                  }
+                },
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

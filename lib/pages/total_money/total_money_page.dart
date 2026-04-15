@@ -7,9 +7,12 @@ import 'package:money_traker/model/goal.dart';
 import 'package:money_traker/store/money_storage.dart';
 import 'package:money_traker/pages/goals/goals_page.dart';
 import 'package:money_traker/pages/goals/logic/goal_engine.dart';
+import 'package:money_traker/pages/widgets/amount_calculator_sheet.dart';
+import 'package:money_traker/pages/total_money/source_history_page.dart';
 
 class TotalMoneyPage extends StatefulWidget {
   final Map<String, double> moneySources;
+  final Map<String, int> sourceIds;
   final void Function(String, double) onAddSource;
   final void Function(String, String, double) onEditSource;
   final void Function(String) onDeleteSource;
@@ -24,6 +27,7 @@ class TotalMoneyPage extends StatefulWidget {
   const TotalMoneyPage({
     super.key,
     required this.moneySources,
+    required this.sourceIds,
     required this.onAddSource,
     required this.onEditSource,
     required this.onDeleteSource,
@@ -36,6 +40,13 @@ class TotalMoneyPage extends StatefulWidget {
 
   @override
   State<TotalMoneyPage> createState() => _TotalMoneyPageState();
+}
+
+class _TransferDraft {
+  final String toSource;
+  final double amount;
+
+  const _TransferDraft({required this.toSource, required this.amount});
 }
 
 class _TotalMoneyPageState extends State<TotalMoneyPage> {
@@ -52,6 +63,22 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
     super.initState();
     _mission = widget.mission;
     _loadGoals();
+  }
+
+  Future<void> _openSourceHistory(BuildContext context, String sourceName) async {
+    final sourceId = widget.sourceIds[sourceName];
+    if (sourceId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Source history is unavailable right now.')),
+      );
+      return;
+    }
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => SourceHistoryPage(sourceId: sourceId, sourceName: sourceName),
+      ),
+    );
   }
 
   Future<void> _loadGoals() async {
@@ -87,9 +114,6 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
     final p = _mainGoal;
     if (p == null) return const SizedBox.shrink();
 
-    final spentMode = p.goal.direction == GoalDirection.spendingLimit;
-    final label = spentMode ? 'Spent' : 'Saved';
-
     // Remaining can become negative if exceeded.
     final remaining = p.goal.targetAmount - p.progress;
     final exceeded = remaining < 0;
@@ -105,19 +129,12 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
           overflow: TextOverflow.ellipsis,
         ),
         const SizedBox(height: 2),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              '$label: ${p.progress.toStringAsFixed(2)}',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(width: 10),
-            Text(
-              'Remaining: ${remaining.toStringAsFixed(2)}',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: remainingColor, fontWeight: FontWeight.w700),
-            ),
-          ],
+        Text(
+          remaining.toStringAsFixed(2),
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: remainingColor,
+            fontWeight: FontWeight.w700,
+          ),
         ),
       ],
     );
@@ -337,51 +354,11 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
   }
 
   Future<double?> _askAmount(BuildContext context, {required String title}) async {
-    final controller = TextEditingController();
-    final formKey = GlobalKey<FormState>();
-
-    final res = await showDialog<double>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: Form(
-          key: formKey,
-          child: TextFormField(
-            controller: controller,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: const InputDecoration(
-              labelText: 'Amount',
-              hintText: '0.00',
-            ),
-            validator: (v) {
-              final val = double.tryParse((v ?? '').trim());
-              if (val == null) return 'Enter a valid number';
-              if (val <= 0) return 'Amount must be > 0';
-              return null;
-            },
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (formKey.currentState!.validate()) {
-                Navigator.of(ctx).pop(double.parse(controller.text.trim()));
-              }
-            },
-            child: const Text('OK'),
-          ),
-        ],
-      ),
+    return showAmountCalculatorSheet(
+      context,
+      title: title,
+      allowZero: false,
     );
-
-    // NOTE: Don't manually dispose controller here; the dialog may still be
-    // finalizing animations/layout when it returns, and disposing can cause
-    // "used after being disposed" errors. Let GC handle it.
-    return res;
   }
 
   Future<void> _showQuickActionsSheet(
@@ -459,6 +436,14 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
                       Navigator.of(sheetCtx).pop();
                     },
                   ),
+                  ListTile(
+                    leading: const Icon(Icons.show_chart),
+                    title: const Text('View source history'),
+                    subtitle: const Text('Graph and cards for this source changes'),
+                    onTap: () async {
+                      await _openSourceHistory(sheetCtx, sourceName);
+                    },
+                  ),
                   const Divider(height: 20),
                   ListTile(
                     leading: const Icon(Icons.edit),
@@ -520,81 +505,55 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
     if (targets.isEmpty) return null;
 
     String toSource = targets.first;
-    final amountController = TextEditingController();
-    final formKey = GlobalKey<FormState>();
 
-    final confirmed = await showDialog<bool>(
+    final res = await showDialog<_TransferDraft>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Transfer'),
-        content: Form(
-          key: formKey,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<String>(
-                  initialValue: toSource,
-                  decoration: const InputDecoration(labelText: 'To'),
-                  items: targets
-                      .map((s) => DropdownMenuItem(value: s, child: Text(s)))
-                      .toList(),
-                  onChanged: (v) {
-                    if (v == null) return;
-                    toSource = v;
-                  },
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: amountController,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(labelText: 'Amount'),
-                  validator: (v) {
-                    final val = double.tryParse((v ?? '').trim());
-                    if (val == null) return 'Enter a valid number';
-                    if (val <= 0) return 'Amount must be > 0';
-                    if (val > fromCurrentAmount) {
-                      return 'Not enough balance (max ${fromCurrentAmount.toStringAsFixed(2)})';
-                    }
-                    return null;
-                  },
-                ),
-              ],
-            ),
+        content: StatefulBuilder(
+          builder: (ctx, setLocal) => DropdownButtonFormField<String>(
+            initialValue: toSource,
+            decoration: const InputDecoration(labelText: 'To'),
+            items: targets.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+            onChanged: (v) {
+              if (v == null) return;
+              setLocal(() => toSource = v);
+            },
           ),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
-          ),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
           ElevatedButton(
-            onPressed: () {
-              if (formKey.currentState!.validate()) {
-                Navigator.of(ctx).pop(true);
-              }
+            onPressed: () async {
+              final amount = await showAmountCalculatorSheet(
+                ctx,
+                title: 'Amount',
+                maxAmount: fromCurrentAmount,
+                allowZero: false,
+              );
+              if (amount == null) return;
+              if (!ctx.mounted) return;
+              Navigator.of(ctx).pop(_TransferDraft(toSource: toSource, amount: amount));
             },
-            child: const Text('Transfer'),
+            child: const Text('Enter amount'),
           ),
         ],
       ),
     );
 
-    if (confirmed == true) {
-      final amount = double.parse(amountController.text.trim());
-      try {
-        await widget.onTransfer(fromSource, toSource, amount);
-      } catch (e) {
-        if (!context.mounted) return confirmed;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Transfer failed: $e')),
-        );
-        return false;
-      }
+    if (res == null) return false;
+    try {
+      await widget.onTransfer(fromSource, res.toSource, res.amount);
+      return true;
+    } catch (e) {
+      if (!context.mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Transfer failed: $e')),
+      );
+      return false;
     }
-
-    return confirmed;
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -628,21 +587,40 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final isCompact = constraints.maxWidth < 560;
+                      final amountText = Text(
                         _showAmounts ? total.toStringAsFixed(2) : '****',
                         style: Theme.of(context).textTheme.displayMedium?.copyWith(
                               color: Colors.green,
                               fontWeight: FontWeight.bold,
                             ),
                         textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(width: 14),
-                      Flexible(child: _buildMainGoalInline(context)),
-                    ],
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      );
+
+                      if (isCompact) {
+                        return Column(
+                          children: [
+                            FittedBox(fit: BoxFit.scaleDown, child: amountText),
+                            const SizedBox(height: 8),
+                            _buildMainGoalInline(context),
+                          ],
+                        );
+                      }
+
+                      return Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Flexible(child: FittedBox(fit: BoxFit.scaleDown, child: amountText)),
+                          const SizedBox(width: 14),
+                          Flexible(child: _buildMainGoalInline(context)),
+                        ],
+                      );
+                    },
                   ),
                 ],
               ),
@@ -796,14 +774,13 @@ class AddMissionDialog extends StatefulWidget {
 
 class _AddMissionDialogState extends State<AddMissionDialog> {
   final _formKey = GlobalKey<FormState>();
-  final _amountController = TextEditingController();
+  double? _amount;
   DateTime? _customStart;
   DateTime? _customEnd;
   bool _isCustom = false;
 
   @override
   void dispose() {
-    _amountController.dispose();
     super.dispose();
   }
 
@@ -828,7 +805,8 @@ class _AddMissionDialogState extends State<AddMissionDialog> {
 
   void _submit() {
     if (!_formKey.currentState!.validate()) return;
-    final amount = double.tryParse(_amountController.text) ?? 0.0;
+    final amount = _amount;
+    if (amount == null || amount <= 0) return;
     DateTime start, end;
     if (_isCustom) {
       if (_customStart == null || _customEnd == null) return;
@@ -859,11 +837,33 @@ class _AddMissionDialogState extends State<AddMissionDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextFormField(
-              controller: _amountController,
-              decoration: const InputDecoration(labelText: 'Target Amount'),
-              keyboardType: TextInputType.numberWithOptions(decimal: true),
-              validator: (v) => (v == null || v.isEmpty) ? 'Enter amount' : null,
+            InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () async {
+                final v = await showAmountCalculatorSheet(
+                  context,
+                  title: 'Target Amount',
+                  initialValue: _amount,
+                  allowZero: false,
+                );
+                if (!mounted) return;
+                setState(() => _amount = v);
+              },
+              child: InputDecorator(
+                decoration: const InputDecoration(
+                  labelText: 'Target Amount',
+                  border: OutlineInputBorder(),
+                ),
+                child: Text(
+                  _amount == null ? 'Tap to enter' : _amount!.toStringAsFixed(2),
+                  style: TextStyle(
+                    color: _amount == null
+                        ? Theme.of(context).hintColor
+                        : Theme.of(context).textTheme.bodyLarge?.color,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
             ),
             const SizedBox(height: 16),
             Row(
@@ -926,7 +926,7 @@ class _AddMissionDialogState extends State<AddMissionDialog> {
           child: const Text('Cancel'),
         ),
         ElevatedButton(
-          onPressed: _submit,
+          onPressed: (_amount == null) ? null : _submit,
           child: const Text('Add'),
         ),
       ],
@@ -954,7 +954,7 @@ class EditMoneySourceDialogWithMission extends StatefulWidget {
 class _EditMoneySourceDialogWithMissionState extends State<EditMoneySourceDialogWithMission> {
   final _formKey = GlobalKey<FormState>();
   late String _name;
-  late String _amount;
+  late double _amount;
   bool _askMission = false;
   bool _decreaseMission = false;
   double _decrement = 0.0;
@@ -963,11 +963,10 @@ class _EditMoneySourceDialogWithMissionState extends State<EditMoneySourceDialog
   void initState() {
     super.initState();
     _name = widget.oldName;
-    _amount = widget.oldAmount.toString();
+    _amount = widget.oldAmount;
   }
 
-  void _checkDecrement(String value) {
-    final newAmount = double.tryParse(value) ?? widget.oldAmount;
+  void _checkDecrement(double newAmount) {
     final diff = widget.oldAmount - newAmount;
     if (diff > 0 && widget.mission != null) {
       setState(() {
@@ -998,19 +997,31 @@ class _EditMoneySourceDialogWithMissionState extends State<EditMoneySourceDialog
               validator: (value) => value == null || value.isEmpty ? 'Enter a name' : null,
               onChanged: (value) => _name = value,
             ),
-            TextFormField(
-              initialValue: _amount,
-              decoration: const InputDecoration(labelText: 'Amount'),
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              validator: (value) {
-                if (value == null || value.isEmpty) return 'Enter an amount';
-                if (double.tryParse(value) == null) return 'Enter a valid number';
-                return null;
+            const SizedBox(height: 12),
+            InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () async {
+                final v = await showAmountCalculatorSheet(
+                  context,
+                  title: 'Amount',
+                  initialValue: _amount,
+                  allowZero: true,
+                );
+                if (v == null) return;
+                if (!mounted) return;
+                setState(() => _amount = v);
+                _checkDecrement(v);
               },
-              onChanged: (value) {
-                _amount = value;
-                _checkDecrement(value);
-              },
+              child: InputDecorator(
+                decoration: const InputDecoration(
+                  labelText: 'Amount',
+                  border: OutlineInputBorder(),
+                ),
+                child: Text(
+                  _amount.toStringAsFixed(2),
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w800),
+                ),
+              ),
             ),
             if (_askMission)
               CheckboxListTile(
@@ -1031,7 +1042,7 @@ class _EditMoneySourceDialogWithMissionState extends State<EditMoneySourceDialog
             if (_formKey.currentState!.validate()) {
               Navigator.of(context).pop({
                 'name': _name,
-                'amount': double.parse(_amount),
+                'amount': _amount,
                 'decreaseMission': _decreaseMission,
                 'decrement': _decrement,
               });

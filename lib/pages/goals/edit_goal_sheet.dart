@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:money_traker/model/goal.dart';
 import 'package:money_traker/model/tag.dart';
 import 'package:money_traker/store/money_storage.dart';
+import 'package:money_traker/pages/widgets/amount_calculator_sheet.dart';
 
 class EditGoalSheet extends StatefulWidget {
   final Goal? goal;
@@ -200,16 +201,32 @@ class _EditGoalSheetState extends State<EditGoalSheet> {
                   ],
                 ),
                 const SizedBox(height: 12),
-                TextFormField(
-                  controller: _target,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(labelText: 'Target Amount', hintText: '0.00'),
-                  validator: (v) {
-                    final parsed = double.tryParse((v ?? '').trim().replaceAll(',', '.'));
-                    if (parsed == null) return 'Enter a number';
-                    if (parsed <= 0) return 'Must be > 0';
-                    return null;
+                InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () async {
+                    final initial = double.tryParse(_target.text.trim().replaceAll(',', '.'));
+                    final v = await showAmountCalculatorSheet(
+                      context,
+                      title: 'Target Amount',
+                      initialValue: initial,
+                      allowZero: false,
+                    );
+                    if (v == null) return;
+                    _target.text = v.toStringAsFixed(2);
+                    if (mounted) setState(() {});
                   },
+                  child: IgnorePointer(
+                    child: TextFormField(
+                      controller: _target,
+                      decoration: const InputDecoration(labelText: 'Target Amount', hintText: '0.00'),
+                      validator: (v) {
+                        final parsed = double.tryParse((v ?? '').trim().replaceAll(',', '.'));
+                        if (parsed == null) return 'Enter a number';
+                        if (parsed <= 0) return 'Must be > 0';
+                        return null;
+                      },
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 16),
                 Text('Repeats', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),

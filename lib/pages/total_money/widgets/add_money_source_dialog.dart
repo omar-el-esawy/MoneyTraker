@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+
+import 'package:money_traker/pages/widgets/amount_calculator_sheet.dart';
 
 class AddMoneySourceDialog extends StatefulWidget {
   final void Function(String, double) onAdd;
@@ -13,7 +14,7 @@ class AddMoneySourceDialog extends StatefulWidget {
 class _AddMoneySourceDialogState extends State<AddMoneySourceDialog> {
   final _formKey = GlobalKey<FormState>();
   String _name = '';
-  String _amount = '';
+  double? _amount;
 
   @override
   Widget build(BuildContext context) {
@@ -29,18 +30,34 @@ class _AddMoneySourceDialogState extends State<AddMoneySourceDialog> {
               validator: (value) => value == null || value.isEmpty ? 'Enter a name' : null,
               onChanged: (value) => _name = value,
             ),
-            TextFormField(
-              decoration: const InputDecoration(labelText: 'Initial Amount'),
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              inputFormatters: [
-                FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
-              ],
-              validator: (value) {
-                if (value == null || value.isEmpty) return 'Enter an amount';
-                if (double.tryParse(value) == null) return 'Enter a valid number';
-                return null;
+            const SizedBox(height: 12),
+            InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () async {
+                final v = await showAmountCalculatorSheet(
+                  context,
+                  title: 'Initial Amount',
+                  initialValue: _amount,
+                  allowZero: true,
+                );
+                if (!mounted) return;
+                setState(() => _amount = v);
               },
-              onChanged: (value) => _amount = value,
+              child: InputDecorator(
+                decoration: const InputDecoration(
+                  labelText: 'Initial Amount',
+                  border: OutlineInputBorder(),
+                ),
+                child: Text(
+                  _amount == null ? 'Tap to enter' : _amount!.toStringAsFixed(2),
+                  style: TextStyle(
+                    color: _amount == null
+                        ? Theme.of(context).hintColor
+                        : Theme.of(context).textTheme.bodyLarge?.color,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
             ),
           ],
         ),
@@ -52,10 +69,11 @@ class _AddMoneySourceDialogState extends State<AddMoneySourceDialog> {
         ),
         ElevatedButton(
           onPressed: () {
-            if (_formKey.currentState!.validate()) {
-              widget.onAdd(_name, double.parse(_amount));
-              Navigator.of(context).pop();
-            }
+            if (!_formKey.currentState!.validate()) return;
+            final amount = _amount;
+            if (amount == null) return;
+            widget.onAdd(_name, amount);
+            Navigator.of(context).pop();
           },
           child: const Text('Add'),
         ),

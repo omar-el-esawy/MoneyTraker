@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:money_traker/model/mission.dart';
 import 'package:money_traker/store/money_storage.dart';
+import 'package:money_traker/pages/widgets/amount_calculator_sheet.dart';
 
 class MissionPage extends StatefulWidget {
   final Mission? mission;
@@ -18,6 +19,8 @@ class _MissionPageState extends State<MissionPage> {
   late DateTime _startDate;
   late DateTime _endDate;
 
+  late final TextEditingController _targetController;
+
   @override
   void initState() {
     super.initState();
@@ -32,6 +35,14 @@ class _MissionPageState extends State<MissionPage> {
       _startDate = DateTime.now();
       _endDate = DateTime.now().add(Duration(days: 30));
     }
+
+    _targetController = TextEditingController(text: _targetAmount.toStringAsFixed(2));
+  }
+
+  @override
+  void dispose() {
+    _targetController.dispose();
+    super.dispose();
   }
 
   void _saveMission() async {
@@ -77,16 +88,28 @@ class _MissionPageState extends State<MissionPage> {
                 onSaved: (value) => _name = value!,
               ),
               TextFormField(
-                initialValue: _targetAmount.toString(),
-                decoration: InputDecoration(labelText: 'Target Amount'),
-                keyboardType: TextInputType.number,
+                controller: _targetController,
+                readOnly: true,
+                decoration: const InputDecoration(labelText: 'Target Amount'),
                 validator: (value) {
-                  if (value == null || double.tryParse(value) == null) {
-                    return 'Please enter a valid amount';
-                  }
+                  final v = double.tryParse((value ?? '').trim().replaceAll(',', '.'));
+                  if (v == null) return 'Please enter a valid amount';
+                  if (v < 0) return 'Must be >= 0';
                   return null;
                 },
-                onSaved: (value) => _targetAmount = double.parse(value!),
+                onTap: () async {
+                  final v = await showAmountCalculatorSheet(
+                    context,
+                    title: 'Target Amount',
+                    initialValue: double.tryParse(_targetController.text),
+                    allowZero: true,
+                  );
+                  if (v == null) return;
+                  _targetController.text = v.toStringAsFixed(2);
+                },
+                onSaved: (value) {
+                  _targetAmount = double.parse((value ?? '0').trim().replaceAll(',', '.'));
+                },
               ),
               // ... Add date pickers for startDate and endDate ...
               ElevatedButton(

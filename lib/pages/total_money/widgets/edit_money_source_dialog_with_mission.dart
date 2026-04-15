@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:money_traker/model/mission.dart';
+import 'package:money_traker/pages/widgets/amount_calculator_sheet.dart';
 
 class EditMoneySourceDialogWithMission extends StatefulWidget {
   final String oldName;
@@ -20,7 +21,7 @@ class EditMoneySourceDialogWithMission extends StatefulWidget {
 class _EditMoneySourceDialogWithMissionState extends State<EditMoneySourceDialogWithMission> {
   final _formKey = GlobalKey<FormState>();
   late String _name;
-  late String _amount;
+  late double _amount;
   bool _askMission = false;
   bool _decreaseMission = false;
   double _decrement = 0.0;
@@ -29,11 +30,10 @@ class _EditMoneySourceDialogWithMissionState extends State<EditMoneySourceDialog
   void initState() {
     super.initState();
     _name = widget.oldName;
-    _amount = widget.oldAmount.toString();
+    _amount = widget.oldAmount;
   }
 
-  void _checkDecrement(String value) {
-    final newAmount = double.tryParse(value) ?? widget.oldAmount;
+  void _checkDecrement(double newAmount) {
     final diff = widget.oldAmount - newAmount;
     if (diff > 0 && widget.mission != null) {
       setState(() {
@@ -64,19 +64,31 @@ class _EditMoneySourceDialogWithMissionState extends State<EditMoneySourceDialog
               validator: (value) => value == null || value.isEmpty ? 'Enter a name' : null,
               onChanged: (value) => _name = value,
             ),
-            TextFormField(
-              initialValue: _amount,
-              decoration: const InputDecoration(labelText: 'Amount'),
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              validator: (value) {
-                if (value == null || value.isEmpty) return 'Enter an amount';
-                if (double.tryParse(value) == null) return 'Enter a valid number';
-                return null;
+            const SizedBox(height: 12),
+            InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () async {
+                final v = await showAmountCalculatorSheet(
+                  context,
+                  title: 'Amount',
+                  initialValue: _amount,
+                  allowZero: true,
+                );
+                if (v == null) return;
+                if (!mounted) return;
+                setState(() => _amount = v);
+                _checkDecrement(v);
               },
-              onChanged: (value) {
-                _amount = value;
-                _checkDecrement(value);
-              },
+              child: InputDecorator(
+                decoration: const InputDecoration(
+                  labelText: 'Amount',
+                  border: OutlineInputBorder(),
+                ),
+                child: Text(
+                  _amount.toStringAsFixed(2),
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w800),
+                ),
+              ),
             ),
             if (_askMission)
               CheckboxListTile(
@@ -97,7 +109,7 @@ class _EditMoneySourceDialogWithMissionState extends State<EditMoneySourceDialog
             if (_formKey.currentState!.validate()) {
               Navigator.of(context).pop({
                 'name': _name,
-                'amount': double.parse(_amount),
+                'amount': _amount,
                 'decreaseMission': _decreaseMission,
                 'decrement': _decrement,
               });

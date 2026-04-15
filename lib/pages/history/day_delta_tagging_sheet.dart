@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:money_traker/model/tag.dart';
 import 'package:money_traker/store/money_storage.dart';
+import 'package:money_traker/pages/widgets/amount_calculator_sheet.dart';
 
 class DayDeltaTaggingResult {
   final Map<int, double> tagIdToAmount;
@@ -192,7 +193,8 @@ class _DayDeltaTaggingSheetState extends State<DayDeltaTaggingSheet> {
     if (!mounted) return;
     setState(() {
       final target = type == TagType.income ? _incomeManual : _expenseManual;
-      target[selectedTag.id!] = (target[selectedTag.id!] ?? 0) + draft.amount;
+      // If category already exists for this day, treat this as an edit/replace.
+      target[selectedTag.id!] = draft.amount;
 
       final tags = type == TagType.income ? _incomeTags : _expenseTags;
       if (!tags.any((t) => t.id == selectedTag.id)) {
@@ -204,13 +206,34 @@ class _DayDeltaTaggingSheetState extends State<DayDeltaTaggingSheet> {
     await _persistNow();
   }
 
+  Future<void> _editAllocation(TagType type, _SectionAllocation row) async {
+    if (row.autoBalanced) return;
+
+    final edited = await showAmountCalculatorSheet(
+      context,
+      title: row.name,
+      prefixText: type == TagType.income ? '+' : '-',
+      initialValue: row.amount,
+      allowZero: false,
+    );
+    if (edited == null) return;
+
+    setState(() {
+      final target = type == TagType.income ? _incomeManual : _expenseManual;
+      target[row.tagId] = edited;
+    });
+
+    await _persistNow();
+  }
+
   Future<_AllocationDraft?> _showAddAllocationDialog(TagType type) async {
     final tags = (type == TagType.income ? _incomeTags : _expenseTags)
         .where((t) => t.name.trim().toLowerCase() != 'others')
         .toList();
     int? selectedTagId = tags.isNotEmpty ? tags.first.id : null;
     bool addingNew = tags.isEmpty;
-    final amountController = TextEditingController();
+    final existingForType = type == TagType.income ? _incomeManual : _expenseManual;
+    double? amount = selectedTagId == null ? null : existingForType[selectedTagId];
     final categoryController = TextEditingController();
 
     return showDialog<_AllocationDraft>(
@@ -240,6 +263,8 @@ class _DayDeltaTaggingSheetState extends State<DayDeltaTaggingSheet> {
                           setLocal(() {
                             addingNew = false;
                             selectedTagId = tag.id;
+                            // Reuse existing value when this category is already used.
+                            amount = existingForType[tag.id];
                           });
                         },
                       ),
@@ -251,6 +276,7 @@ class _DayDeltaTaggingSheetState extends State<DayDeltaTaggingSheet> {
                         setLocal(() {
                           addingNew = true;
                           selectedTagId = null;
+                          amount = null;
                         });
                       },
                     ),
@@ -265,12 +291,32 @@ class _DayDeltaTaggingSheetState extends State<DayDeltaTaggingSheet> {
                   ),
                 ],
                 const SizedBox(height: 16),
-                TextField(
-                  controller: amountController,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(
-                    labelText: 'Amount',
-                    prefixText: type == TagType.income ? '+' : '-',
+                InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () async {
+                    final v = await showAmountCalculatorSheet(
+                      ctx,
+                      title: 'Amount',
+                      prefixText: type == TagType.income ? '+' : '-',
+                      initialValue: amount,
+                      allowZero: false,
+                    );
+                    if (v == null) return;
+                    setLocal(() => amount = v);
+                  },
+                  child: InputDecorator(
+                    decoration: InputDecoration(
+                      labelText: 'Amount',
+                      border: const OutlineInputBorder(),
+                      prefixText: type == TagType.income ? '+' : '-',
+                    ),
+                    child: Text(
+                      amount == null ? 'Tap to enter' : amount!.toStringAsFixed(2),
+                      style: TextStyle(
+                        color: amount == null ? Theme.of(ctx).hintColor : Theme.of(ctx).textTheme.bodyLarge?.color,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -280,7 +326,7 @@ class _DayDeltaTaggingSheetState extends State<DayDeltaTaggingSheet> {
             TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
             ElevatedButton(
               onPressed: () {
-                final parsed = double.tryParse(amountController.text.trim().replaceAll(',', '.'));
+                final parsed = amount;
                 if (parsed == null || parsed <= 0) return;
 
                 if (addingNew) {
@@ -293,7 +339,7 @@ class _DayDeltaTaggingSheetState extends State<DayDeltaTaggingSheet> {
                 if (selectedTagId == null) return;
                 Navigator.of(ctx).pop(_AllocationDraft(amount: parsed, tagId: selectedTagId));
               },
-              child: const Text('Add'),
+              child: Text((!addingNew && selectedTagId != null && existingForType.containsKey(selectedTagId)) ? 'Update' : 'Add'),
             ),
           ],
         ),
@@ -492,48 +538,52 @@ class _DayDeltaTaggingSheetState extends State<DayDeltaTaggingSheet> {
             ...rows.map(
               (row) => Padding(
                 padding: const EdgeInsets.symmetric(vertical: 6),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(color: chipBg, borderRadius: BorderRadius.circular(8)),
-                      child: Icon(
-                        isIncome ? Icons.south_west : Icons.north_east,
-                        size: 16,
-                        color: accent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: row.autoBalanced ? null : () => _editAllocation(type, row),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(color: chipBg, borderRadius: BorderRadius.circular(8)),
+                        child: Icon(
+                          isIncome ? Icons.south_west : Icons.north_east,
+                          size: 16,
+                          color: accent,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            row.name,
-                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
-                          ),
-                          if (row.autoBalanced)
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
                             Text(
-                              'Auto-balanced',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .labelSmall
-                                  ?.copyWith(color: const Color(0xFF9CA3AF)),
+                              row.name,
+                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
                             ),
-                        ],
+                            if (row.autoBalanced)
+                              Text(
+                                'Auto-balanced',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .labelSmall
+                                    ?.copyWith(color: const Color(0xFF9CA3AF)),
+                              ),
+                          ],
+                        ),
                       ),
-                    ),
-                    Text(
-                      '${isIncome ? '+' : '-'}${_fmtAmount(row.amount)}',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: accent, fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(width: 4),
-                    IconButton(
-                      icon: const Icon(Icons.close, size: 14, color: Color(0xFFD0D0D0)),
-                      onPressed: row.autoBalanced ? null : () => _removeAllocation(type, row.tagId),
-                    ),
-                  ],
+                      Text(
+                        '${isIncome ? '+' : '-'}${_fmtAmount(row.amount)}',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: accent, fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(width: 6),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 14, color: Color(0xFFD0D0D0)),
+                        onPressed: row.autoBalanced ? null : () => _removeAllocation(type, row.tagId),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),

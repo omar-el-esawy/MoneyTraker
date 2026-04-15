@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:money_traker/model/mission.dart';
+import 'package:money_traker/pages/widgets/amount_calculator_sheet.dart';
 
 class AddMissionDialog extends StatefulWidget {
   final void Function(Mission) onAdd;
@@ -13,14 +14,13 @@ class AddMissionDialog extends StatefulWidget {
 
 class _AddMissionDialogState extends State<AddMissionDialog> {
   final _formKey = GlobalKey<FormState>();
-  final _amountController = TextEditingController();
+  double? _amount;
   DateTime? _customStart;
   DateTime? _customEnd;
   bool _isCustom = false;
 
   @override
   void dispose() {
-    _amountController.dispose();
     super.dispose();
   }
 
@@ -45,7 +45,8 @@ class _AddMissionDialogState extends State<AddMissionDialog> {
 
   void _submit() {
     if (!_formKey.currentState!.validate()) return;
-    final amount = double.tryParse(_amountController.text) ?? 0.0;
+    final amount = _amount;
+    if (amount == null || amount <= 0) return;
     DateTime start, end;
     if (_isCustom) {
       if (_customStart == null || _customEnd == null) return;
@@ -76,11 +77,33 @@ class _AddMissionDialogState extends State<AddMissionDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextFormField(
-              controller: _amountController,
-              decoration: const InputDecoration(labelText: 'Target Amount'),
-              keyboardType: TextInputType.numberWithOptions(decimal: true),
-              validator: (v) => (v == null || v.isEmpty) ? 'Enter amount' : null,
+            InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () async {
+                final v = await showAmountCalculatorSheet(
+                  context,
+                  title: 'Target Amount',
+                  initialValue: _amount,
+                  allowZero: false,
+                );
+                if (!mounted) return;
+                setState(() => _amount = v);
+              },
+              child: InputDecorator(
+                decoration: const InputDecoration(
+                  labelText: 'Target Amount',
+                  border: OutlineInputBorder(),
+                ),
+                child: Text(
+                  _amount == null ? 'Tap to enter' : _amount!.toStringAsFixed(2),
+                  style: TextStyle(
+                    color: _amount == null
+                        ? Theme.of(context).hintColor
+                        : Theme.of(context).textTheme.bodyLarge?.color,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
             ),
             const SizedBox(height: 16),
             Row(
@@ -143,7 +166,7 @@ class _AddMissionDialogState extends State<AddMissionDialog> {
           child: const Text('Cancel'),
         ),
         ElevatedButton(
-          onPressed: _submit,
+          onPressed: (_amount == null) ? null : _submit,
           child: const Text('Add'),
         ),
       ],

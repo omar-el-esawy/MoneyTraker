@@ -47,82 +47,39 @@ class GoalEngine {
   Future<GoalProgress> computeProgress(Goal goal, {DateTime? asOf}) async {
     final cycle = goal.currentCycle(now: asOf).range;
 
-    // Load days in range.
     final db = await _storage.database;
-    final days = await db.query(
-      'total_money_days',
-      where: 'date >= ? AND date < ?',
-      whereArgs: [cycle.start.toIso8601String(), cycle.end.toIso8601String()],
-      columns: const ['id', 'date', 'totalAmount'],
-      orderBy: 'date ASC',
-    );
-
-    if (days.isEmpty) {
-      return GoalProgress(goal: goal, cycle: cycle, totalIncome: 0, totalExpenses: 0);
-    }
-
-    // Seed previous total from the last day before range.
-    final firstDate = DateTime.parse(days.first['date'] as String);
-    final prevDayRows = await db.query(
-      'total_money_days',
-      where: 'date < ?',
-      whereArgs: [firstDate.toIso8601String()],
-      columns: const ['totalAmount'],
-      orderBy: 'date DESC',
-      limit: 1,
-    );
-
-    double? prevTotal = prevDayRows.isNotEmpty ? (prevDayRows.first['totalAmount'] as num).toDouble() : null;
-
-    double totalIncomeDelta = 0;
-    double totalExpenseDelta = 0;
-
-    for (final row in days) {
-      final curTotal = (row['totalAmount'] as num).toDouble();
-      if (prevTotal != null) {
-        final delta = curTotal - prevTotal;
-        if (delta > 0) totalIncomeDelta += delta;
-        if (delta < 0) totalExpenseDelta += delta.abs();
-      }
-      prevTotal = curTotal;
-    }
-
-    // Load tagged entries for all days in cycle.
-    final dayIds = days.map((e) => e['id'] as int).toList(growable: false);
-    final placeholders = List.filled(dayIds.length, '?').join(',');
-
     final excludedIds = goal.excludedTagIds.toSet();
 
+    // Strictly sum tagged entries inside the goal cycle window.
     final entries = await db.rawQuery('''
       SELECT e.amount, e.tagId, t.type
       FROM total_money_day_delta_entries e
       JOIN tags t ON t.id = e.tagId
-      WHERE e.dayId IN ($placeholders)
-    ''', dayIds);
+      JOIN total_money_days d ON d.id = e.dayId
+      WHERE d.date >= ? AND d.date < ?
+    ''', [cycle.start.toIso8601String(), cycle.end.toIso8601String()]);
 
-    double taggedIncome = 0;
-    double taggedExpense = 0;
+    double totalIncome = 0;
+    double totalExpenses = 0;
 
     for (final row in entries) {
       final tagId = row['tagId'] as int;
       if (excludedIds.contains(tagId)) continue;
+
       final type = TagTypeDb.fromDb(row['type'] as String);
       final amount = (row['amount'] as num).toDouble();
       if (type == TagType.income) {
-        taggedIncome += amount;
+        totalIncome += amount;
       } else {
-        taggedExpense += amount;
+        totalExpenses += amount;
       }
     }
 
-    // Others/unallocated after exclusions.
-    final othersIncome = (totalIncomeDelta - taggedIncome);
-    final othersExpense = (totalExpenseDelta - taggedExpense);
-
-    final totalIncome = taggedIncome + (othersIncome > 0 ? othersIncome : 0);
-    final totalExpenses = taggedExpense + (othersExpense > 0 ? othersExpense : 0);
-
-    return GoalProgress(goal: goal, cycle: cycle, totalIncome: totalIncome, totalExpenses: totalExpenses);
+    return GoalProgress(
+      goal: goal,
+      cycle: cycle,
+      totalIncome: totalIncome,
+      totalExpenses: totalExpenses,
+    );
   }
 }
-

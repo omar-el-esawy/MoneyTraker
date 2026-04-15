@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:sqflite/sqflite.dart';
 import 'package:money_traker/model/tag.dart';
 import 'package:money_traker/model/goal.dart';
 import 'package:money_traker/pages/goals/logic/goal_engine.dart';
@@ -376,6 +377,84 @@ class _InsightsPageState extends State<InsightsPage> with SingleTickerProviderSt
     await _load();
   }
 
+  Future<void> _renameTagByName(String tagName, TagType type) async {
+    final normalized = tagName.trim();
+    if (normalized.toLowerCase() == 'others') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('The "Others" tag can\'t be renamed.')),
+      );
+      return;
+    }
+
+    final controller = TextEditingController(text: normalized);
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Edit category name'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Category name'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (newName == null) return;
+    if (newName.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Category name can\'t be empty.')),
+      );
+      return;
+    }
+    if (newName == normalized) return;
+    if (newName.toLowerCase() == 'others') {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('"Others" is reserved and can\'t be used.')),
+      );
+      return;
+    }
+
+    final db = await _storage.database;
+    final rows = await db.query(
+      'tags',
+      columns: const ['id'],
+      where: 'name = ? AND type = ?',
+      whereArgs: [normalized, type.dbValue],
+      limit: 1,
+    );
+
+    if (rows.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Tag not found.')),
+      );
+      return;
+    }
+
+    final tagId = rows.first['id'] as int;
+    try {
+      await _storage.renameTag(id: tagId, newName: newName);
+    } on DatabaseException catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('A category with this name already exists.')),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    await _load();
+  }
+
   Widget _buildList(
     Map<String, double> m, {
     required Color dot,
@@ -400,37 +479,40 @@ class _InsightsPageState extends State<InsightsPage> with SingleTickerProviderSt
         color: const Color(0xFFF3F4F6),
         borderRadius: BorderRadius.circular(16),
       ),
-      child: Column(
-        children: [
-          ...m.entries.map(
-            (e) {
-              final isOthers = e.key.trim().toLowerCase() == 'others';
-              return ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                leading: Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
-                ),
-                title: Text(e.key),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(e.value.toStringAsFixed(2)),
-                    const SizedBox(width: 8),
-                    if (!isOthers)
-                      IconButton(
-                        tooltip: 'Delete tag',
-                        icon: const Icon(Icons.delete_outline),
-                        onPressed: () => _deleteTagByName(e.key, type),
-                      ),
-                  ],
-                ),
-              );
-            },
-          ),
-        ],
+      child: Scrollbar(
+        thumbVisibility: true,
+        child: ListView.separated(
+          itemCount: m.length,
+          itemBuilder: (context, index) {
+            final e = m.entries.elementAt(index);
+            final isOthers = e.key.trim().toLowerCase() == 'others';
+            return ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              onTap: isOthers ? null : () => _renameTagByName(e.key, type),
+              leading: Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
+              ),
+              title: Text(e.key),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(e.value.toStringAsFixed(2)),
+                  const SizedBox(width: 8),
+                  if (!isOthers)
+                    IconButton(
+                      tooltip: 'Delete tag',
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: () => _deleteTagByName(e.key, type),
+                    ),
+                ],
+              ),
+            );
+          },
+          separatorBuilder: (_, __) => const Divider(height: 1),
+        ),
       ),
     );
   }
