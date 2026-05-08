@@ -8,6 +8,7 @@ import 'package:money_traker/pages/settings/settings_page.dart';
 import 'package:money_traker/store/money_storage.dart';
 import 'package:money_traker/model/money_source.dart';
 import 'package:money_traker/model/money_source_change.dart';
+import 'package:money_traker/model/tag.dart';
 import 'package:money_traker/model/total_money_day.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
@@ -61,7 +62,8 @@ class _HomePageState extends State<HomePage> {
       }
       await _addOrUpdateTodayHistory();
     } catch (e, stack) {
-      print('Error in _initData: $e\n$stack');
+      // Use debugPrint for safer logging in production builds.
+      debugPrint('Error in _initData: $e\n$stack');
     } finally {
       setState(() {
         _isLoading = false;
@@ -69,7 +71,78 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<void> _addMoneySource(String name, double amount) async {
+  /// Apply a delta to historical total days starting from [effectiveDate].
+  /// This will ensure a TotalMoneyDay exists for [effectiveDate] (creating one
+  /// if needed) and then add [delta] to that day and all subsequent recorded days.
+  Future<int?> _applyDeltaToHistory(DateTime effectiveDate, double delta) async {
+    final dateOnly = DateTime(effectiveDate.year, effectiveDate.month, effectiveDate.day);
+
+    // Refresh the cached history from storage.
+    _historyDays = await _storage.getTotalMoneyDays();
+    _historyDays.sort((a, b) => a.date.compareTo(b.date));
+
+    // Find an existing entry for the chosen date.
+    final existingIndex = _historyDays.indexWhere((d) =>
+        d.date.year == dateOnly.year && d.date.month == dateOnly.month && d.date.day == dateOnly.day);
+
+    if (existingIndex == -1) {
+      // Determine a sensible base total for the new day. Prefer the previous day's
+      // total if available, otherwise fall back to the current total across sources.
+      double baseTotal;
+      final previousDays = _historyDays.where((d) => d.date.isBefore(dateOnly)).toList();
+      if (previousDays.isNotEmpty) {
+        previousDays.sort((a, b) => a.date.compareTo(b.date));
+        baseTotal = previousDays.last.totalAmount;
+      } else if (_historyDays.isNotEmpty) {
+        // No previous day but there are later days; use the first known day's total as base.
+        baseTotal = _historyDays.first.totalAmount;
+      } else {
+        // No history at all — use current total across sources.
+        baseTotal = _getTotalMoney();
+      }
+
+      final newDay = TotalMoneyDay.create(date: dateOnly, totalAmount: baseTotal + delta);
+      await _storage.addTotalMoneyDay(newDay);
+    } else {
+      // Update the existing day by adding the delta.
+      final day = _historyDays[existingIndex];
+      final updated = TotalMoneyDay(
+        id: day.id,
+        date: day.date,
+        totalAmount: day.totalAmount + delta,
+        note: day.note,
+      );
+      await _storage.updateTotalMoneyDay(updated);
+    }
+
+    // Now refresh and apply the delta to all subsequent days (strictly after the chosen date).
+    _historyDays = await _storage.getTotalMoneyDays();
+    _historyDays.sort((a, b) => a.date.compareTo(b.date));
+
+    for (final day in _historyDays) {
+      final dayOnly = DateTime(day.date.year, day.date.month, day.date.day);
+      if (!dayOnly.isAfter(dateOnly)) continue; // only subsequent days
+      final updated = TotalMoneyDay(
+        id: day.id,
+        date: day.date,
+        totalAmount: day.totalAmount + delta,
+        note: day.note,
+      );
+      await _storage.updateTotalMoneyDay(updated);
+    }
+
+    // Refresh the in-memory cache once more so the UI can read the updated values.
+    _historyDays = await _storage.getTotalMoneyDays();
+
+    // Return the id for the effective date.
+    final finalDay = _historyDays.firstWhere(
+      (d) => d.date.year == dateOnly.year && d.date.month == dateOnly.month && d.date.day == dateOnly.day,
+      orElse: () => TotalMoneyDay.create(date: dateOnly, totalAmount: 0.0),
+    );
+    return finalDay.id;
+  }
+
+  Future<void> _addMoneySource(String name, double amount, {DateTime? effectiveDate}) async {
     final newSource = MoneySource.create(name: name, amount: amount);
     final insertedId = await _storage.addMoneySource(newSource);
     final persistedSource = MoneySource(id: insertedId, name: name, amount: amount);
@@ -79,7 +152,7 @@ class _HomePageState extends State<HomePage> {
         sourceId: insertedId,
         deltaAmount: amount,
         resultingAmount: amount,
-        createdAt: DateTime.now(),
+        createdAt: effectiveDate ?? DateTime.now(),
         type: MoneySourceChangeType.created,
       ),
     );
@@ -87,14 +160,21 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       _sources.add(persistedSource);
     });
-    await _addOrUpdateTodayHistory();
+    // If the change is being backdated to an older day, update history from that day;
+    // otherwise update today as usual.
+    if (effectiveDate == null) {
+      await _addOrUpdateTodayHistory();
+    } else {
+      await _applyDeltaToHistory(effectiveDate, amount);
+    }
   }
 
   Future<void> _editMoneySource(
     int id,
     String newName,
-    double newAmount,
-  ) async {
+    double newAmount, {
+    DateTime? effectiveDate,
+  }) async {
     final index = _sources.indexWhere((e) => e.id == id);
     if (index != -1) {
       final oldSource = _sources[index];
@@ -112,12 +192,17 @@ class _HomePageState extends State<HomePage> {
           sourceId: id,
           deltaAmount: newAmount - oldSource.amount,
           resultingAmount: newAmount,
-          createdAt: DateTime.now(),
+          createdAt: effectiveDate ?? DateTime.now(),
           type: MoneySourceChangeType.edited,
           note: oldSource.name == newName ? null : 'Renamed from ${oldSource.name}',
         ),
       );
-      await _addOrUpdateTodayHistory();
+      final delta = newAmount - oldSource.amount;
+      if (effectiveDate == null) {
+        await _addOrUpdateTodayHistory();
+      } else if (delta.abs() > 0.0000001) {
+        await _applyDeltaToHistory(effectiveDate, delta);
+      }
     }
   }
 
@@ -132,7 +217,7 @@ class _HomePageState extends State<HomePage> {
     return _sources.fold(0.0, (sum, e) => sum + e.amount);
   }
 
-  Future<void> _addOrUpdateTodayHistory() async {
+  Future<int?> _addOrUpdateTodayHistory() async {
     final today = DateTime.now();
     final total = _getTotalMoney();
 
@@ -171,9 +256,10 @@ class _HomePageState extends State<HomePage> {
       orElse: () => TotalMoneyDay.create(date: today, totalAmount: 0.0),
     );
 
+    int? todayDayId;
     if (existingDay.id == null) {
       final newDay = TotalMoneyDay.create(date: today, totalAmount: total);
-      await _storage.addTotalMoneyDay(newDay);
+      todayDayId = await _storage.addTotalMoneyDay(newDay);
     } else {
       final updatedDay = TotalMoneyDay(
         id: existingDay.id,
@@ -182,9 +268,23 @@ class _HomePageState extends State<HomePage> {
         note: existingDay.note,
       );
       await _storage.updateTotalMoneyDay(updatedDay);
+      todayDayId = existingDay.id;
     }
 
     _historyDays = await _storage.getTotalMoneyDays();
+
+    if (todayDayId == null) {
+      final todayRow = _historyDays.firstWhere(
+        (day) =>
+            day.date.year == today.year &&
+            day.date.month == today.month &&
+            day.date.day == today.day,
+        orElse: () => TotalMoneyDay.create(date: today, totalAmount: 0.0),
+      );
+      todayDayId = todayRow.id;
+    }
+
+    return todayDayId;
   }
 
   Future<void> _addMission(Mission mission) async {
@@ -213,7 +313,13 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<void> _adjustMoneySourceByName(String name, double delta) async {
+  Future<void> _adjustMoneySourceByName(
+    String name,
+    double delta, {
+    String? categoryName,
+    double? categoryAmount,
+    DateTime? effectiveDate,
+  }) async {
     final idx = _sources.indexWhere((s) => s.name == name);
     if (idx == -1) return;
     final src = _sources[idx];
@@ -229,11 +335,40 @@ class _HomePageState extends State<HomePage> {
         sourceId: src.id!,
         deltaAmount: delta,
         resultingAmount: updated.amount,
-        createdAt: DateTime.now(),
+        createdAt: effectiveDate ?? DateTime.now(),
         type: delta >= 0 ? MoneySourceChangeType.add : MoneySourceChangeType.subtract,
       ),
     );
-    await _addOrUpdateTodayHistory();
+    int? targetDayId;
+    if (effectiveDate == null) {
+      targetDayId = await _addOrUpdateTodayHistory();
+    } else {
+      targetDayId = await _applyDeltaToHistory(effectiveDate, delta);
+    }
+
+    final normalizedCategory = categoryName?.trim();
+    if (targetDayId == null || normalizedCategory == null || normalizedCategory.isEmpty) {
+      return;
+    }
+
+    final tagType = delta >= 0 ? TagType.income : TagType.expense;
+    final tag = await _storage.ensureTag(name: normalizedCategory, type: tagType);
+    final amountToCategorize = (categoryAmount ?? delta.abs()).abs();
+    if (amountToCategorize <= 0.0000001 || tag.id == null) {
+      return;
+    }
+
+    final existing = await _storage.getDeltaEntriesForDay(targetDayId);
+    final current = existing
+        .where((e) => e.tagId == tag.id)
+        .fold<double>(0.0, (sum, e) => sum + e.amount);
+
+    await _storage.upsertDeltaEntry(
+      dayId: targetDayId,
+      tagId: tag.id!,
+      amount: current + amountToCategorize,
+      autoBalanced: false,
+    );
   }
 
   Future<void> _transferBetweenSources({
@@ -309,13 +444,13 @@ class _HomePageState extends State<HomePage> {
         moneySources: {for (var s in _sources) s.name: s.amount},
         sourceIds: {for (var s in _sources.where((s) => s.id != null)) s.name: s.id!},
         onAddSource: _addMoneySource,
-        onEditSource: (name, newName, newAmount) {
+        onEditSource: (name, newName, newAmount, {DateTime? effectiveDate}) {
           final source = _sources.firstWhere(
             (s) => s.name == name,
             orElse: () => MoneySource.create(name: '', amount: 0.0),
           );
           if (source.id != null) {
-            _editMoneySource(source.id!, newName, newAmount);
+            _editMoneySource(source.id!, newName, newAmount, effectiveDate: effectiveDate);
           }
         },
         onDeleteSource: (name) {
@@ -327,8 +462,22 @@ class _HomePageState extends State<HomePage> {
             _deleteMoneySource(source.id!);
           }
         },
-        onQuickAdd: (name, delta) => _adjustMoneySourceByName(name, delta),
-        onQuickSubtract: (name, delta) => _adjustMoneySourceByName(name, -delta),
+        onQuickAdd: (name, delta, {categoryName, categoryAmount, DateTime? effectiveDate}) =>
+            _adjustMoneySourceByName(
+          name,
+          delta,
+          categoryName: categoryName,
+          categoryAmount: categoryAmount,
+          effectiveDate: effectiveDate,
+        ),
+        onQuickSubtract: (name, delta, {categoryName, categoryAmount, DateTime? effectiveDate}) =>
+            _adjustMoneySourceByName(
+          name,
+          -delta,
+          categoryName: categoryName,
+          categoryAmount: categoryAmount,
+          effectiveDate: effectiveDate,
+        ),
         onTransfer: (from, to, amount) => _transferBetweenSources(from: from, to: to, amount: amount),
         mission: _mission,
         onAddMission: _addMission,

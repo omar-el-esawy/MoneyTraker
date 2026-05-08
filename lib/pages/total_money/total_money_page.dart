@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'widgets/add_money_source_dialog.dart';
 import 'package:money_traker/model/mission.dart';
 import 'package:money_traker/model/goal.dart';
+import 'package:money_traker/model/tag.dart';
 import 'package:money_traker/store/money_storage.dart';
 import 'package:money_traker/pages/goals/goals_page.dart';
 import 'package:money_traker/pages/goals/logic/goal_engine.dart';
@@ -14,11 +15,23 @@ class TotalMoneyPage extends StatefulWidget {
   final Map<String, double> moneySources;
   final Map<String, int> sourceIds;
   final void Function(String, double) onAddSource;
-  final void Function(String, String, double) onEditSource;
+  final void Function(String, String, double, {DateTime? effectiveDate}) onEditSource;
   final void Function(String) onDeleteSource;
 
-  final Future<void> Function(String sourceName, double amount) onQuickAdd;
-  final Future<void> Function(String sourceName, double amount) onQuickSubtract;
+  final Future<void> Function(
+    String sourceName,
+    double amount, {
+    String? categoryName,
+    double? categoryAmount,
+    DateTime? effectiveDate,
+  }) onQuickAdd;
+  final Future<void> Function(
+    String sourceName,
+    double amount, {
+    String? categoryName,
+    double? categoryAmount,
+    DateTime? effectiveDate,
+  }) onQuickSubtract;
   final Future<void> Function(String fromSource, String toSource, double amount) onTransfer;
 
   final Mission? mission;
@@ -47,6 +60,20 @@ class _TransferDraft {
   final double amount;
 
   const _TransferDraft({required this.toSource, required this.amount});
+}
+
+class _QuickAdjustmentDraft {
+  final double amount;
+  final String? categoryName;
+  final double? categoryAmount;
+  final DateTime? effectiveDate;
+
+  const _QuickAdjustmentDraft({
+    required this.amount,
+    this.categoryName,
+    this.categoryAmount,
+    this.effectiveDate,
+  });
 }
 
 class _TotalMoneyPageState extends State<TotalMoneyPage> {
@@ -311,8 +338,9 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
       final double newAmount = result['amount'];
       final bool decreaseMission = result['decreaseMission'] ?? false;
       final double decrement = result['decrement'] ?? 0.0;
+      final DateTime? effectiveDate = result['effectiveDate'] as DateTime?;
 
-      widget.onEditSource(oldName, newName, newAmount);
+      widget.onEditSource(oldName, newName, newAmount, effectiveDate: effectiveDate);
 
       // Only decrease mission.targetAmount if user confirmed and mission exists
       if (_mission != null && decreaseMission && decrement > 0) {
@@ -353,12 +381,176 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
     );
   }
 
-  Future<double?> _askAmount(BuildContext context, {required String title}) async {
-    return showAmountCalculatorSheet(
+  Future<_QuickAdjustmentDraft?> _showQuickAdjustmentDialog(
+    BuildContext context, {
+    required bool isAdd,
+    required String sourceName,
+    required double currentAmount,
+  }) async {
+    final amount = await showAmountCalculatorSheet(
       context,
-      title: title,
+      title: isAdd ? 'Add amount' : 'Subtract amount',
+      maxAmount: isAdd ? null : currentAmount,
       allowZero: false,
     );
+    if (amount == null) return null;
+
+    final type = isAdd ? TagType.income : TagType.expense;
+    final tags = await _storage.getTags(type: type);
+    final categoryNames = tags.map((e) => e.name).toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+
+    if (!context.mounted) return null;
+
+    bool categorize = false;
+    bool customCategory = categoryNames.isEmpty;
+    String? selectedCategory = categoryNames.isEmpty ? null : categoryNames.first;
+    final categoryController = TextEditingController();
+    double? customCategoryAmount;
+    bool backdate = false;
+    DateTime selectedDate = DateTime.now();
+
+    final draft = await showDialog<_QuickAdjustmentDraft>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: Text(isAdd ? 'Add to $sourceName' : 'Subtract from $sourceName'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Amount: ${amount.toStringAsFixed(2)}'),
+                const SizedBox(height: 12),
+                CheckboxListTile(
+                  value: categorize,
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Categorize this change (optional)'),
+                  onChanged: (v) => setLocal(() => categorize = v ?? false),
+                ),
+                if (categorize) ...[
+                  const SizedBox(height: 8),
+                  if (categoryNames.isNotEmpty)
+                    DropdownButtonFormField<String>(
+                      initialValue: customCategory ? '__custom__' : selectedCategory,
+                      decoration: const InputDecoration(labelText: 'Category'),
+                      items: [
+                        ...categoryNames.map((n) => DropdownMenuItem(value: n, child: Text(n))),
+                        const DropdownMenuItem(value: '__custom__', child: Text('Custom...')),
+                      ],
+                      onChanged: (v) {
+                        if (v == null) return;
+                        setLocal(() {
+                          customCategory = v == '__custom__';
+                          if (!customCategory) {
+                            selectedCategory = v;
+                          }
+                        });
+                      },
+                    ),
+                  if (customCategory) ...[
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: categoryController,
+                      decoration: const InputDecoration(labelText: 'Category name'),
+                      autofocus: categoryNames.isEmpty,
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () async {
+                      final v = await showAmountCalculatorSheet(
+                        ctx,
+                        title: 'Category amount',
+                        initialValue: customCategoryAmount,
+                        maxAmount: amount,
+                        allowZero: false,
+                      );
+                      if (v == null) return;
+                      setLocal(() => customCategoryAmount = v);
+                    },
+                    child: InputDecorator(
+                      decoration: const InputDecoration(
+                        labelText: 'Category amount (optional)',
+                        border: OutlineInputBorder(),
+                      ),
+                      child: Text(
+                        customCategoryAmount == null
+                            ? 'Tap to set (defaults to full amount)'
+                            : customCategoryAmount!.toStringAsFixed(2),
+                        style: TextStyle(
+                          color: customCategoryAmount == null
+                              ? Theme.of(ctx).hintColor
+                              : Theme.of(ctx).textTheme.bodyLarge?.color,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                CheckboxListTile(
+                  value: backdate,
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Log this change to a different date'),
+                  subtitle: const Text('Choose if this was a late entry (backdate)'),
+                  onChanged: (v) => setLocal(() => backdate = v ?? false),
+                ),
+                if (backdate) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(child: Text(DateFormat('yyyy-MM-dd').format(selectedDate))),
+                      IconButton(
+                        icon: const Icon(Icons.calendar_today),
+                        onPressed: () async {
+                          final now = DateTime.now();
+                          final picked = await showDatePicker(
+                            context: ctx,
+                            initialDate: selectedDate,
+                            firstDate: DateTime(now.year - 3),
+                            lastDate: DateTime(now.year, now.month, now.day),
+                          );
+                          if (picked != null) setLocal(() => selectedDate = picked);
+                        },
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                String? categoryName;
+                if (categorize) {
+                  categoryName = customCategory ? categoryController.text.trim() : selectedCategory;
+                  if (categoryName == null || categoryName.isEmpty) return;
+                }
+
+                Navigator.of(ctx).pop(
+                  _QuickAdjustmentDraft(
+                    amount: amount,
+                    categoryName: categoryName,
+                    categoryAmount: categorize ? (customCategoryAmount ?? amount) : null,
+                    effectiveDate: backdate ? selectedDate : null,
+                  ),
+                );
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    categoryController.dispose();
+    return draft;
   }
 
   Future<void> _showQuickActionsSheet(
@@ -402,9 +594,20 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
                     title: const Text('Add amount'),
                     subtitle: const Text('Increase this source by a number'),
                     onTap: () async {
-                      final amount = await _askAmount(sheetCtx, title: 'Add amount');
-                      if (amount == null) return;
-                      await widget.onQuickAdd(sourceName, amount);
+                      final draft = await _showQuickAdjustmentDialog(
+                        sheetCtx,
+                        isAdd: true,
+                        sourceName: sourceName,
+                        currentAmount: currentAmount,
+                      );
+                      if (draft == null) return;
+                      await widget.onQuickAdd(
+                        sourceName,
+                        draft.amount,
+                        categoryName: draft.categoryName,
+                        categoryAmount: draft.categoryAmount,
+                        effectiveDate: draft.effectiveDate,
+                      );
                       if (!sheetCtx.mounted) return;
                       Navigator.of(sheetCtx).pop();
                     },
@@ -414,9 +617,20 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
                     title: const Text('Subtract amount'),
                     subtitle: const Text('Decrease this source by a number'),
                     onTap: () async {
-                      final amount = await _askAmount(sheetCtx, title: 'Subtract amount');
-                      if (amount == null) return;
-                      await widget.onQuickSubtract(sourceName, amount);
+                      final draft = await _showQuickAdjustmentDialog(
+                        sheetCtx,
+                        isAdd: false,
+                        sourceName: sourceName,
+                        currentAmount: currentAmount,
+                      );
+                      if (draft == null) return;
+                       await widget.onQuickSubtract(
+                         sourceName,
+                         draft.amount,
+                         categoryName: draft.categoryName,
+                         categoryAmount: draft.categoryAmount,
+                         effectiveDate: draft.effectiveDate,
+                       );
                       if (!sheetCtx.mounted) return;
                       Navigator.of(sheetCtx).pop();
                     },
@@ -958,6 +1172,8 @@ class _EditMoneySourceDialogWithMissionState extends State<EditMoneySourceDialog
   bool _askMission = false;
   bool _decreaseMission = false;
   double _decrement = 0.0;
+    bool _backdate = false;
+    DateTime _selectedDate = DateTime.now();
 
   @override
   void initState() {
@@ -1029,6 +1245,35 @@ class _EditMoneySourceDialogWithMissionState extends State<EditMoneySourceDialog
                 onChanged: (v) => setState(() => _decreaseMission = v ?? false),
                 title: Text('Decrease mission by $_decrement'),
               ),
+            const SizedBox(height: 12),
+            CheckboxListTile(
+              value: _backdate,
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Log edit to a different date'),
+              subtitle: const Text('Choose if this edit applies to an older date'),
+              onChanged: (v) => setState(() => _backdate = v ?? false),
+            ),
+            if (_backdate) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(child: Text(DateFormat('yyyy-MM-dd').format(_selectedDate))),
+                  IconButton(
+                    icon: const Icon(Icons.calendar_today),
+                    onPressed: () async {
+                      final now = DateTime.now();
+                      final picked = await showDatePicker(
+                        context: context,
+                        initialDate: _selectedDate,
+                        firstDate: DateTime(now.year - 3),
+                        lastDate: DateTime(now.year, now.month, now.day),
+                      );
+                      if (picked != null) setState(() => _selectedDate = picked);
+                    },
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),
@@ -1045,6 +1290,7 @@ class _EditMoneySourceDialogWithMissionState extends State<EditMoneySourceDialog
                 'amount': _amount,
                 'decreaseMission': _decreaseMission,
                 'decrement': _decrement,
+                'effectiveDate': _backdate ? _selectedDate : null,
               });
             }
           },
