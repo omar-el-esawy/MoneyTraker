@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:money_traker/constants/app_constants.dart';
@@ -49,7 +50,6 @@ class _ZoomableGoalChartState extends State<ZoomableGoalChart> with TickerProvid
   AnimationController? _flingController;
 
   int? _hoverIndex;
-  double _startPan = 0.0;
 
   final MoneyStorage _storage = MoneyStorage();
   bool _loading = true;
@@ -399,7 +399,6 @@ class _LineChartPainter extends CustomPainter {
     if (visibleData.isEmpty) return;
 
     final totalDuration = visibleEnd.difference(visibleStart).inDays.abs().toDouble();
-    final barWidth = chartWidth / (totalDuration + 1);
 
     // Draw grid lines
     final gridPaint = Paint()
@@ -453,11 +452,9 @@ class _LineChartPainter extends CustomPainter {
     canvas.drawPath(
       fillPath,
       Paint()
-        ..color = AppConstants.primaryColor.withOpacity(0.1)
+        ..color = AppConstants.primaryColor.withValues(alpha: 0.1)
         ..style = PaintingStyle.fill,
     );
-
-    canvas.drawPath(fillPath..reset(), linePaint);
 
     // Re-draw line
     for (int i = 0; i < visibleData.length; i++) {
@@ -490,8 +487,7 @@ class _LineChartPainter extends CustomPainter {
     }
 
     // Draw axes labels
-    final textPainter = TextPainter(textDirection: TextDirection.ltr);
-    final labelPaint = TextPainter(textDirection: TextDirection.ltr)
+    final labelPaint = TextPainter(textDirection: ui.TextDirection.ltr)
       ..text = TextSpan(
         text: DateFormat('MMM d').format(visibleStart),
         style: const TextStyle(color: Colors.grey, fontSize: 10),
@@ -499,12 +495,13 @@ class _LineChartPainter extends CustomPainter {
       ..layout();
     labelPaint.paint(canvas, Offset(padding - 20, size.height - 25));
 
-    textPainter.text = TextSpan(
-      text: DateFormat('MMM d').format(visibleEnd),
-      style: const TextStyle(color: Colors.grey, fontSize: 10),
-    );
-    textPainter.layout();
-    textPainter.paint(canvas, Offset(size.width - padding - 20, size.height - 25));
+    final endLabelPaint = TextPainter(textDirection: ui.TextDirection.ltr)
+      ..text = TextSpan(
+        text: DateFormat('MMM d').format(visibleEnd),
+        style: const TextStyle(color: Colors.grey, fontSize: 10),
+      )
+      ..layout();
+    endLabelPaint.paint(canvas, Offset(size.width - padding - 20, size.height - 25));
   }
 
   @override
@@ -560,7 +557,6 @@ class _HistogramPainter extends CustomPainter {
 
     final totalDuration = visibleEnd.difference(visibleStart).inDays.abs().toDouble();
     final barWidth = (chartWidth / (totalDuration + 1)) * 0.8;
-    const barSpacing = 2.0;
 
     // Draw grid lines
     final gridPaint = Paint()
@@ -598,13 +594,13 @@ class _HistogramPainter extends CustomPainter {
           const Radius.circular(2),
         ),
         Paint()
-          ..color = color.withOpacity(hoverIndex == i ? 1.0 : 0.7)
+          ..color = color.withValues(alpha: hoverIndex == i ? 1.0 : 0.7)
           ..style = PaintingStyle.fill,
       );
     }
 
     // Draw labels
-    final textPainter = TextPainter(textDirection: TextDirection.ltr);
+    final textPainter = TextPainter(textDirection: ui.TextDirection.ltr);
     textPainter.text = TextSpan(
       text: DateFormat('MMM d').format(visibleStart),
       style: const TextStyle(color: Colors.grey, fontSize: 10),
@@ -623,4 +619,10 @@ class _HistogramPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
+
+
+
+
+
+
 

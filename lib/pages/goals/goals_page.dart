@@ -3,6 +3,7 @@ import 'package:money_traker/model/goal.dart';
 import 'edit_goal_sheet.dart';
 import 'package:money_traker/pages/goals/logic/goal_engine.dart';
 import 'package:money_traker/store/money_storage.dart';
+import 'goal_detail_view.dart';
 
 class GoalsPage extends StatefulWidget {
   const GoalsPage({super.key});
@@ -125,7 +126,9 @@ class _GoalsPageState extends State<GoalsPage> {
 
                     return InkWell(
                       borderRadius: BorderRadius.circular(16),
-                      onTap: () => _editGoal(g),
+                                      onTap: () => Navigator.of(ctx).push(
+                                        MaterialPageRoute(builder: (_) => GoalDetailPageView(goal: g)),
+                                      ),
                       child: Container(
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
