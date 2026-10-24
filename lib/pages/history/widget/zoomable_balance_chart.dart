@@ -9,10 +9,12 @@ import 'package:money_traker/model/total_money_day.dart';
 
 class ZoomableBalanceChart extends StatefulWidget {
   final List<TotalMoneyDay> historyDays;
+  final bool showAmounts;
 
   const ZoomableBalanceChart({
     super.key,
     required this.historyDays,
+    this.showAmounts = true,
   });
 
   @override
@@ -130,6 +132,7 @@ class _ZoomableBalanceChartState extends State<ZoomableBalanceChart> with Ticker
           chartSize: Size(chartWidth, chartHeight),
           hoverIndex: _hoverIndex,
           showDots: _zoomLevel > 2.0,
+          showAmounts: widget.showAmounts,
         );
 
         void updateHover(Offset localPos) {
@@ -217,12 +220,13 @@ class _ZoomableBalanceChartState extends State<ZoomableBalanceChart> with Ticker
                       CustomPaint(
                         size: Size(chartWidth, chartHeight),
                         painter: painter,
-                        foregroundPainter: _hoverIndex == null
+                        foregroundPainter: _hoverIndex == null || !widget.showAmounts
                             ? null
                             : _TooltipPainter(
                                 data: data,
                                 painter: painter,
                                 hoverIndex: _hoverIndex!,
+                                showAmounts: widget.showAmounts,
                               ),
                       ),
                       // Reserve space for x-axis labels so we don't overflow.
@@ -465,6 +469,7 @@ class _BalanceChartPainter extends CustomPainter {
   final Size chartSize;
   final int? hoverIndex;
   final bool showDots;
+  final bool showAmounts;
 
   _BalanceChartPainter({
     required this.data,
@@ -473,6 +478,7 @@ class _BalanceChartPainter extends CustomPainter {
     required this.chartSize,
     required this.hoverIndex,
     required this.showDots,
+    required this.showAmounts,
   });
 
   late final DateTime _start = data.first.date;
@@ -567,6 +573,8 @@ class _BalanceChartPainter extends CustomPainter {
 
     // Grid + axes
     _drawGrid(canvas);
+
+    if (!showAmounts) return;
 
     // Visible points with 1 padding point before/after
     final points = _visiblePointsWithPadding();
@@ -691,15 +699,17 @@ class _BalanceChartPainter extends CustomPainter {
 
       dash.drawDashedLine(canvas, Offset(0, y), Offset(chartSize.width, y), gridPaint);
 
-      final val = _minY + (_maxY - _minY) * t;
-      final label = _formatCompact(val);
-      final tp = TextPainter(
-        text: TextSpan(text: label, style: textStyle),
-        textDirection: ui.TextDirection.ltr,
-      )..layout();
+      if (showAmounts) {
+        final val = _minY + (_maxY - _minY) * t;
+        final label = _formatCompact(val);
+        final tp = TextPainter(
+          text: TextSpan(text: label, style: textStyle),
+          textDirection: ui.TextDirection.ltr,
+        )..layout();
 
-      // draw slightly outside left (we still have card padding though)
-      tp.paint(canvas, Offset(-2, y - tp.height / 2));
+        // draw slightly outside left (we still have card padding though)
+        tp.paint(canvas, Offset(-2, y - tp.height / 2));
+      }
     }
 
     // X grid lines only (labels are painted in a separate painter below)
@@ -726,7 +736,8 @@ class _BalanceChartPainter extends CustomPainter {
         oldDelegate.panOffset != panOffset ||
         oldDelegate.data.length != data.length ||
         oldDelegate.hoverIndex != hoverIndex ||
-        oldDelegate.showDots != showDots;
+        oldDelegate.showDots != showDots ||
+        oldDelegate.showAmounts != showAmounts;
   }
 }
 
@@ -734,11 +745,13 @@ class _TooltipPainter extends CustomPainter {
   final List<TotalMoneyDay> data;
   final _BalanceChartPainter painter;
   final int hoverIndex;
+  final bool showAmounts;
 
   _TooltipPainter({
     required this.data,
     required this.painter,
     required this.hoverIndex,
+    required this.showAmounts,
   });
 
   @override
@@ -758,7 +771,7 @@ class _TooltipPainter extends CustomPainter {
 
     // tooltip
     final nf = NumberFormat('#,##0.00');
-    final amount = nf.format(d.totalAmount);
+    final amount = showAmounts ? nf.format(d.totalAmount) : '••••';
     final dateStr = DateFormat('MMM dd, yyyy · HH:mm').format(d.date);
 
     final titleStyle = const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.white);
@@ -795,7 +808,9 @@ class _TooltipPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _TooltipPainter oldDelegate) {
-    return oldDelegate.hoverIndex != hoverIndex || oldDelegate.data.length != data.length;
+    return oldDelegate.hoverIndex != hoverIndex ||
+        oldDelegate.data.length != data.length ||
+        oldDelegate.showAmounts != showAmounts;
   }
 }
 

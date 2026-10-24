@@ -3,15 +3,19 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
-import 'package:money_traker/store/money_storage.dart';
+import 'package:money_traker/pages/sms/bank_messages_page.dart';
+import 'package:money_traker/services/backup_service.dart';
+import 'package:money_traker/tour/app_tour.dart';
 
 class SettingsPage extends StatefulWidget {
   final Future<void> Function()? onDataImported;
+  final VoidCallback? onReplayTour;
 
-  const SettingsPage({super.key, this.onDataImported});
+  const SettingsPage({super.key, this.onDataImported, this.onReplayTour});
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -19,27 +23,69 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   bool _busy = false;
+  String _autoBackupLabel =
+      'Checked when you open the app. ${BackupService.phoneFolder} keeps the last ${BackupService.phoneKeepDays} days.';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAutoBackupLabel();
+  }
+
+  Future<void> _loadAutoBackupLabel() async {
+    final at = await BackupService.instance.lastAutomaticBackupAt();
+    if (!mounted) return;
+    setState(() {
+      _autoBackupLabel =
+          at == null
+              ? 'Checked when you open the app. No backup yet. ${BackupService.phoneFolder} keeps the last ${BackupService.phoneKeepDays} days.'
+              : 'Last saved ${DateFormat('yyyy-MM-dd HH:mm').format(at)}. Checked again the next time you open the app. ${BackupService.phoneFolder} keeps the last ${BackupService.phoneKeepDays} days.';
+    });
+  }
 
   Future<void> _exportBackup() async {
     setState(() => _busy = true);
     try {
-      final storage = MoneyStorage();
-      final jsonMap = await storage.exportBackupJson();
-      final jsonStr = const JsonEncoder.withIndent('  ').convert(jsonMap);
+      final jsonStr = await BackupService.instance.buildBackupJson();
 
       final dir = await getTemporaryDirectory();
       final file = File('${dir.path}/money_traker_backup.json');
       await file.writeAsString(jsonStr);
+      await BackupService.instance.writeAutomaticBackup(force: true);
+      await _loadAutoBackupLabel();
 
-      await Share.shareXFiles(
-        [XFile(file.path, mimeType: 'application/json')],
-        text: 'Money Tracker backup',
-      );
+      await Share.shareXFiles([
+        XFile(file.path, mimeType: 'application/json'),
+      ], text: 'Money Tracker backup');
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Export failed: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Export failed: $e')));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _shareLatestAutomatic() async {
+    setState(() => _busy = true);
+    try {
+      final existing = await BackupService.instance.latestBackupFile();
+      final file =
+          existing ??
+          await BackupService.instance.writeAutomaticBackup(force: true);
+      if (file == null) {
+        throw Exception('Could not create a backup file.');
+      }
+      await _loadAutoBackupLabel();
+      await Share.shareXFiles([
+        XFile(file.path, mimeType: 'application/json'),
+      ], text: 'Money Tracker backup');
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not share backup: $e')));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -48,22 +94,23 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _importBackup() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Import backup'),
-        content: const Text(
-          'Import will replace your current local data (money sources, history, missions).\n\nDo you want to continue?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
+      builder:
+          (ctx) => AlertDialog(
+            title: const Text('Import backup'),
+            content: const Text(
+              'Import replaces the data stored in the backup: money sources, history, tags, goals, missions, bank messages, reading rules, and bank settings.\n\nOlder backups that only contain money data leave bank messages on this phone unchanged.\n\nDo you want to continue?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('Import'),
+              ),
+            ],
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Import'),
-          ),
-        ],
-      ),
     );
 
     if (confirmed != true) return;
@@ -85,11 +132,14 @@ class _SettingsPageState extends State<SettingsPage> {
 
       final content = await File(path).readAsString();
       final decoded = json.decode(content);
-      if (decoded is! Map<String, dynamic>) {
+      if (decoded is! Map) {
         throw Exception('Invalid backup format.');
       }
 
-      await MoneyStorage().importBackupJson(decoded, replace: true);
+      await BackupService.instance.importDecoded(
+        Map<String, dynamic>.from(decoded),
+      );
+      await _loadAutoBackupLabel();
       await widget.onDataImported?.call();
 
       if (!mounted) return;
@@ -98,9 +148,9 @@ class _SettingsPageState extends State<SettingsPage> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Import failed: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Import failed: $e')));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -108,6 +158,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final tour = AppTourScope.maybeOf(context);
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: AbsorbPointer(
@@ -116,17 +167,60 @@ class _SettingsPageState extends State<SettingsPage> {
           padding: const EdgeInsets.all(16),
           children: [
             ListTile(
-              leading: const Icon(Icons.upload_file),
-              title: const Text('Export backup'),
-              subtitle: const Text('Create a JSON backup you can share/save.'),
-              onTap: _exportBackup,
+              key: tour?.replay,
+              leading: const Icon(Icons.explore_outlined),
+              title: const Text('App tour / الجولة التعريفية'),
+              subtitle: const Text(
+                'Walk through what each section does. شرح سريع لكل خانة.',
+              ),
+              onTap: widget.onReplayTour,
             ),
             const Divider(),
             ListTile(
-              leading: const Icon(Icons.download),
-              title: const Text('Import backup'),
-              subtitle: const Text('Restore from a previously exported JSON backup.'),
-              onTap: _importBackup,
+              key: tour?.bankMessages,
+              leading: const Icon(Icons.sms_outlined),
+              title: const Text('Bank messages / رسائل البنك'),
+              subtitle: const Text(
+                'Set a start date, copy bank SMS, and mark numbers to build reading rules.',
+              ),
+              onTap: () async {
+                await Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const BankMessagesPage()),
+                );
+                await widget.onDataImported?.call();
+              },
+            ),
+            const Divider(),
+            KeyedSubtree(
+              key: tour?.backup,
+              child: Column(
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.upload_file),
+                    title: const Text('Export backup'),
+                    subtitle: const Text(
+                      'Share a full JSON backup: money, history, goals, and bank messages.',
+                    ),
+                    onTap: _exportBackup,
+                  ),
+                  const Divider(),
+                  ListTile(
+                    leading: const Icon(Icons.download),
+                    title: const Text('Import backup'),
+                    subtitle: const Text(
+                      'Restore from a previously exported JSON backup.',
+                    ),
+                    onTap: _importBackup,
+                  ),
+                  const Divider(),
+                  ListTile(
+                    leading: const Icon(Icons.backup_outlined),
+                    title: const Text('Automatic backup'),
+                    subtitle: Text(_autoBackupLabel),
+                    onTap: _shareLatestAutomatic,
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 24),
             if (_busy)

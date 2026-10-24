@@ -1,3 +1,6 @@
+import com.android.build.gradle.LibraryExtension
+import org.gradle.kotlin.dsl.configure
+
 allprojects {
     repositories {
         google()
@@ -14,6 +17,17 @@ subprojects {
 }
 subprojects {
     project.evaluationDependsOn(":app")
+}
+
+subprojects {
+    if (name == "telephony") {
+        plugins.withId("com.android.library") {
+            extensions.configure<LibraryExtension>("android") {
+                // Namespace required by AGP 8+ for library modules.
+                namespace = "com.shounakmulay.telephony"
+            }
+        }
+    }
 }
 
 tasks.register<Delete>("clean") {

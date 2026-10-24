@@ -14,6 +14,7 @@ Future<double?> showAmountCalculatorSheet(
   String? prefixText,
   double? maxAmount,
   bool allowZero = false,
+  bool announceMax = true,
 }) {
   return showModalBottomSheet<double>(
     context: context,
@@ -26,6 +27,7 @@ Future<double?> showAmountCalculatorSheet(
       prefixText: prefixText,
       maxAmount: maxAmount,
       allowZero: allowZero,
+      announceMax: announceMax,
     ),
   );
 }
@@ -36,6 +38,7 @@ class _AmountCalculatorSheet extends StatefulWidget {
   final String? prefixText;
   final double? maxAmount;
   final bool allowZero;
+  final bool announceMax;
 
   const _AmountCalculatorSheet({
     required this.title,
@@ -43,6 +46,7 @@ class _AmountCalculatorSheet extends StatefulWidget {
     this.prefixText,
     this.maxAmount,
     required this.allowZero,
+    required this.announceMax,
   });
 
   @override
@@ -304,7 +308,11 @@ class _AmountCalculatorSheetState extends State<_AmountCalculatorSheet> {
 
     final max = widget.maxAmount;
     if (max != null && amount > max + 0.0000001) {
-      _setError('Max ${max.toStringAsFixed(2)}');
+      _setError(
+        widget.announceMax
+            ? 'Max ${max.toStringAsFixed(2)}'
+            : 'Higher than the available balance',
+      );
       return;
     }
 

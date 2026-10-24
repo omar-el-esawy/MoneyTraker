@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:money_traker/model/tag.dart';
 import 'package:money_traker/store/money_storage.dart';
 import 'package:money_traker/pages/widgets/amount_calculator_sheet.dart';
+import 'package:money_traker/pages/widgets/obscurable_amount.dart';
 
 class DayDeltaTaggingResult {
   final Map<int, double> tagIdToAmount;
@@ -15,12 +16,14 @@ class DayDeltaTaggingSheet extends StatefulWidget {
   final int dayId;
   final double delta; // today - previous
   final DateTime? entryDate;
+  final bool showAmounts;
 
   const DayDeltaTaggingSheet({
     super.key,
     required this.dayId,
     required this.delta,
     this.entryDate,
+    this.showAmounts = true,
   });
 
   @override
@@ -310,13 +313,22 @@ class _DayDeltaTaggingSheetState extends State<DayDeltaTaggingSheet> {
                       border: const OutlineInputBorder(),
                       prefixText: type == TagType.income ? '+' : '-',
                     ),
-                    child: Text(
-                      amount == null ? 'Tap to enter' : amount!.toStringAsFixed(2),
-                      style: TextStyle(
-                        color: amount == null ? Theme.of(ctx).hintColor : Theme.of(ctx).textTheme.bodyLarge?.color,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
+                    child:
+                        amount == null
+                            ? Text(
+                              'Tap to enter',
+                              style: TextStyle(
+                                color: Theme.of(ctx).hintColor,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            )
+                            : ObscurableAmount(
+                              amount: amount!.toStringAsFixed(2),
+                              visible: widget.showAmounts,
+                              style: Theme.of(ctx).textTheme.bodyLarge?.copyWith(
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
                   ),
                 ),
               ],
@@ -397,7 +409,8 @@ class _DayDeltaTaggingSheetState extends State<DayDeltaTaggingSheet> {
   }
 
   Widget _buildSummaryHeader() {
-    final netPositive = widget.delta >= 0;
+    final netPositive = widget.showAmounts && widget.delta >= 0;
+    final netNegative = widget.showAmounts && widget.delta < 0;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
@@ -414,19 +427,50 @@ class _DayDeltaTaggingSheetState extends State<DayDeltaTaggingSheet> {
             runSpacing: 8,
             children: [
               _pill(
-                label: 'Net: ${_fmtSigned(widget.delta)}',
-                bg: netPositive ? const Color(0xFFE8F5E9) : const Color(0xFFFFEBEE),
-                fg: netPositive ? const Color(0xFF1B5E20) : const Color(0xFFD32F2F),
+                label:
+                    widget.showAmounts
+                        ? 'Net: ${_fmtSigned(widget.delta)}'
+                        : 'Net: $kHiddenAmount',
+                bg:
+                    netPositive
+                        ? const Color(0xFFE8F5E9)
+                        : (netNegative
+                            ? const Color(0xFFFFEBEE)
+                            : const Color(0xFFF3F4F6)),
+                fg:
+                    netPositive
+                        ? const Color(0xFF1B5E20)
+                        : (netNegative
+                            ? const Color(0xFFD32F2F)
+                            : const Color(0xFF6B7280)),
               ),
               _pill(
-                label: 'In: +${_fmtAmount(_totalIncome)}',
-                bg: const Color(0xFFE8F5E9),
-                fg: const Color(0xFF1B5E20),
+                label:
+                    widget.showAmounts
+                        ? 'In: +${_fmtAmount(_totalIncome)}'
+                        : 'In: $kHiddenAmount',
+                bg:
+                    widget.showAmounts
+                        ? const Color(0xFFE8F5E9)
+                        : const Color(0xFFF3F4F6),
+                fg:
+                    widget.showAmounts
+                        ? const Color(0xFF1B5E20)
+                        : const Color(0xFF6B7280),
               ),
               _pill(
-                label: 'Out: -${_fmtAmount(_totalExpenses)}',
-                bg: const Color(0xFFFFEBEE),
-                fg: const Color(0xFFD32F2F),
+                label:
+                    widget.showAmounts
+                        ? 'Out: -${_fmtAmount(_totalExpenses)}'
+                        : 'Out: $kHiddenAmount',
+                bg:
+                    widget.showAmounts
+                        ? const Color(0xFFFFEBEE)
+                        : const Color(0xFFF3F4F6),
+                fg:
+                    widget.showAmounts
+                        ? const Color(0xFFD32F2F)
+                        : const Color(0xFF6B7280),
               ),
             ],
           ),
@@ -445,7 +489,9 @@ class _DayDeltaTaggingSheetState extends State<DayDeltaTaggingSheet> {
                   const Icon(Icons.warning_amber_rounded, size: 16, color: Color(0xFFE65100)),
                   const SizedBox(width: 8),
                   Text(
-                    'Unallocated: ${_fmtSigned(_unallocated)}',
+                    widget.showAmounts
+                        ? 'Unallocated: ${_fmtSigned(_unallocated)}'
+                        : 'Unallocated: $kHiddenAmount',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: const Color(0xFFE65100),
                           fontWeight: FontWeight.w600,
@@ -498,8 +544,13 @@ class _DayDeltaTaggingSheetState extends State<DayDeltaTaggingSheet> {
               ),
               const Spacer(),
               Text(
-                '${isIncome ? '+' : '-'}${_fmtAmount(total)}',
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(color: accent, fontWeight: FontWeight.w700),
+                widget.showAmounts
+                    ? '${isIncome ? '+' : '-'}${_fmtAmount(total)}'
+                    : kHiddenAmount,
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  color: widget.showAmounts ? accent : const Color(0xFF6B7280),
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               const SizedBox(width: 8),
               Container(
@@ -574,8 +625,13 @@ class _DayDeltaTaggingSheetState extends State<DayDeltaTaggingSheet> {
                         ),
                       ),
                       Text(
-                        '${isIncome ? '+' : '-'}${_fmtAmount(row.amount)}',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: accent, fontWeight: FontWeight.w700),
+                        widget.showAmounts
+                            ? '${isIncome ? '+' : '-'}${_fmtAmount(row.amount)}'
+                            : kHiddenAmount,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: widget.showAmounts ? accent : const Color(0xFF6B7280),
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                       const SizedBox(width: 6),
                       IconButton(

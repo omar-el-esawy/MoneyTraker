@@ -371,6 +371,51 @@ class MoneyStorage {
     return result.map((map) => TotalMoneyDay.fromMap(map)).toList();
   }
 
+  Future<void> applyAmountDeltaToHistory(DateTime effectiveDate, double delta) async {
+    if (delta.abs() <= 0.0000001) return;
+    final dateOnly = DateTime(effectiveDate.year, effectiveDate.month, effectiveDate.day);
+    final days = await getTotalMoneyDays();
+    days.sort((a, b) => a.date.compareTo(b.date));
+
+    final existingIndex = days.indexWhere((d) =>
+        d.date.year == dateOnly.year && d.date.month == dateOnly.month && d.date.day == dateOnly.day);
+
+    if (existingIndex == -1) {
+      double baseTotal;
+      final previousDays = days.where((d) => d.date.isBefore(dateOnly)).toList();
+      if (previousDays.isNotEmpty) {
+        previousDays.sort((a, b) => a.date.compareTo(b.date));
+        baseTotal = previousDays.last.totalAmount;
+      } else if (days.isNotEmpty) {
+        baseTotal = days.first.totalAmount;
+      } else {
+        final sources = await getMoneySources();
+        baseTotal = sources.fold<double>(0, (sum, source) => sum + source.amount) - delta;
+      }
+      await addTotalMoneyDay(TotalMoneyDay.create(date: dateOnly, totalAmount: baseTotal + delta));
+    } else {
+      final day = days[existingIndex];
+      await updateTotalMoneyDay(TotalMoneyDay(
+        id: day.id,
+        date: day.date,
+        totalAmount: day.totalAmount + delta,
+        note: day.note,
+      ));
+    }
+
+    final refreshed = await getTotalMoneyDays();
+    for (final day in refreshed) {
+      final dayOnly = DateTime(day.date.year, day.date.month, day.date.day);
+      if (!dayOnly.isAfter(dateOnly)) continue;
+      await updateTotalMoneyDay(TotalMoneyDay(
+        id: day.id,
+        date: day.date,
+        totalAmount: day.totalAmount + delta,
+        note: day.note,
+      ));
+    }
+  }
+
   Future<void> updateTotalMoneyDay(TotalMoneyDay day) async {
     final db = await database;
     if (day.id == null) {
@@ -525,6 +570,146 @@ class MoneyStorage {
     return out;
   }
 
+  Future<Map<DateTime, double>> amountsForTag(int tagId) async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT d.date AS date, e.amount AS amount
+      FROM total_money_day_delta_entries e
+      JOIN total_money_days d ON d.id = e.dayId
+      WHERE e.tagId = ?
+    ''', [tagId]);
+    final totals = <DateTime, double>{};
+    for (final row in rows) {
+      final parsed = DateTime.tryParse(row['date'] as String? ?? '');
+      if (parsed == null) continue;
+      final day = DateTime(parsed.year, parsed.month, parsed.day);
+      totals[day] = (totals[day] ?? 0) + ((row['amount'] as num?)?.toDouble() ?? 0);
+    }
+    return totals;
+  }
+
+  Future<int?> dayIdFor(DateTime date) async {
+    final days = await getTotalMoneyDays();
+    for (final day in days) {
+      if (day.date.year == date.year && day.date.month == date.month && day.date.day == date.day) {
+        return day.id;
+      }
+    }
+    return null;
+  }
+
+  /// Adds [delta] to one category on that day.
+  /// If the day already has an auto-balanced "Others" row, rebuild it so the
+  /// new category does not sit on top of the old remainder.
+  Future<void> adjustCategorizedAmount({
+    required DateTime date,
+    required int tagId,
+    required double delta,
+  }) async {
+    if (delta.abs() < 0.0000001) return;
+    final dayId = await dayIdFor(date);
+    if (dayId == null) return;
+
+    final rows = await getDeltaEntriesForDayDetailed(dayId);
+    final hasAuto = rows.any((row) => ((row['autoBalanced'] as num?) ?? 0) > 0);
+    if (!hasAuto) {
+      var current = 0.0;
+      for (final row in rows) {
+        if (row['tagId'] == tagId) {
+          current += ((row['amount'] as num?) ?? 0).toDouble();
+        }
+      }
+      final next = current + delta;
+      await upsertDeltaEntry(
+        dayId: dayId,
+        tagId: tagId,
+        amount: next < 0 ? 0 : next,
+        autoBalanced: false,
+      );
+      return;
+    }
+
+    final days = await getTotalMoneyDays();
+    days.sort((a, b) => a.date.compareTo(b.date));
+    final index = days.indexWhere((day) => day.id == dayId);
+    if (index < 0) return;
+    final dayDelta = index == 0
+        ? days[index].totalAmount
+        : days[index].totalAmount - days[index - 1].totalAmount;
+
+    final manual = <int, double>{};
+    final manualType = <int, String>{};
+    for (final row in rows) {
+      if (((row['autoBalanced'] as num?) ?? 0) > 0) continue;
+      final id = row['tagId'] as int;
+      final amount = ((row['amount'] as num?) ?? 0).toDouble();
+      if (amount <= 0.0000001) continue;
+      manual[id] = amount;
+      manualType[id] = row['tagType'] as String? ?? TagType.expense.dbValue;
+    }
+
+    var manualIncome = 0.0;
+    var manualExpense = 0.0;
+    for (final entry in manual.entries) {
+      if (manualType[entry.key] == TagType.income.dbValue) {
+        manualIncome += entry.value;
+      } else {
+        manualExpense += entry.value;
+      }
+    }
+
+    final old = manual[tagId] ?? 0;
+    if (old > 0) {
+      if (manualType[tagId] == TagType.income.dbValue) {
+        manualIncome -= old;
+      } else {
+        manualExpense -= old;
+      }
+    }
+    final next = old + delta;
+    String? nextType = manualType[tagId];
+    if (next > 0.0000001) {
+      final tags = await getTags();
+      for (final tag in tags) {
+        if (tag.id == tagId) nextType = tag.type.dbValue;
+      }
+      nextType ??= TagType.expense.dbValue;
+      manual[tagId] = next;
+      manualType[tagId] = nextType;
+      if (nextType == TagType.income.dbValue) {
+        manualIncome += next;
+      } else {
+        manualExpense += next;
+      }
+    } else {
+      manual.remove(tagId);
+    }
+
+    final autoIncome = dayDelta + manualExpense - manualIncome;
+    final autoExpense = manualIncome - manualExpense - dayDelta;
+    final snap = Map<int, double>.from(manual);
+    final autoIds = <int>{};
+    if (autoIncome > 0.0000001) {
+      final incomeOthers = await ensureTag(name: 'Others', type: TagType.income);
+      if (incomeOthers.id != null) {
+        snap[incomeOthers.id!] = autoIncome;
+        autoIds.add(incomeOthers.id!);
+      }
+    }
+    if (autoExpense > 0.0000001) {
+      final expenseOthers = await ensureTag(name: 'Others', type: TagType.expense);
+      if (expenseOthers.id != null) {
+        snap[expenseOthers.id!] = autoExpense;
+        autoIds.add(expenseOthers.id!);
+      }
+    }
+    await replaceDeltaEntriesForDay(
+      dayId: dayId,
+      tagIdToAmount: snap,
+      autoBalancedTagIds: autoIds,
+    );
+  }
+
   Future<void> upsertDeltaEntry({
     required int dayId,
     required int tagId,
@@ -583,7 +768,7 @@ class MoneyStorage {
   }
 
   // ---------------- Backup ----------------
-  static const int backupSchemaVersion = 4;
+  static const int backupSchemaVersion = 5;
 
   Future<Map<String, dynamic>> exportBackupJson() async {
     final db = await database;

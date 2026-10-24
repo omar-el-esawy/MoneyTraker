@@ -3,8 +3,14 @@ import 'package:money_traker/pages/splash_screen.dart';
 import 'package:money_traker/pages/home_page.dart';
 import 'package:money_traker/constants/app_constants.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:money_traker/screens/notifications_screen.dart';
+import 'package:money_traker/services/notification_service.dart';
 
-void main() {
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await NotificationService.instance.initialize(navigatorKey: navigatorKey);
   runApp(const MyApp());
 }
 
@@ -29,6 +35,10 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: AppConstants.appTitle,
       debugShowCheckedModeBanner: false,
+      navigatorKey: navigatorKey,
+      routes: {
+        '/notifications': (context) => const NotificationsScreen(),
+      },
       theme: base.copyWith(
         textTheme: GoogleFonts.interTextTheme(base.textTheme).copyWith(
           headlineLarge: GoogleFonts.inter(fontSize: 32, fontWeight: FontWeight.w700, color: AppConstants.textPrimary),

@@ -4,16 +4,19 @@ import 'package:intl/intl.dart';
 import 'package:money_traker/model/money_source_change.dart';
 import 'package:money_traker/model/total_money_day.dart';
 import 'package:money_traker/pages/history/widget/history_chart.dart';
+import 'package:money_traker/pages/widgets/obscurable_amount.dart';
 import 'package:money_traker/store/money_storage.dart';
 
 class SourceHistoryPage extends StatefulWidget {
   final int sourceId;
   final String sourceName;
+  final bool showAmounts;
 
   const SourceHistoryPage({
     super.key,
     required this.sourceId,
     required this.sourceName,
+    this.showAmounts = true,
   });
 
   @override
@@ -100,7 +103,10 @@ class _SourceHistoryPageState extends State<SourceHistoryPage> {
               padding: const EdgeInsets.only(bottom: 16),
               children: [
                 const SizedBox(height: 16),
-                HistoryChart(historyDays: chartData),
+                HistoryChart(
+                  historyDays: chartData,
+                  showAmounts: widget.showAmounts,
+                ),
                 const SizedBox(height: 16),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -118,7 +124,12 @@ class _SourceHistoryPageState extends State<SourceHistoryPage> {
                 else
                   ..._changes.map((change) {
                     final sign = change.deltaAmount >= 0 ? '+' : '';
-                    final deltaColor = change.deltaAmount >= 0 ? const Color(0xFF1B5E20) : const Color(0xFFD32F2F);
+                    final deltaColor =
+                        widget.showAmounts
+                            ? (change.deltaAmount >= 0
+                                ? const Color(0xFF1B5E20)
+                                : const Color(0xFFD32F2F))
+                            : const Color(0xFF6B7280);
                     final time = DateFormat('yyyy-MM-dd HH:mm').format(change.createdAt);
 
                     return Slidable(
@@ -144,15 +155,24 @@ class _SourceHistoryPageState extends State<SourceHistoryPage> {
                             mainAxisAlignment: MainAxisAlignment.center,
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
-                              Text(
-                                '$sign${change.deltaAmount.toStringAsFixed(2)}',
+                              ObscurableAmount(
+                                amount:
+                                    '$sign${change.deltaAmount.toStringAsFixed(2)}',
+                                visible: widget.showAmounts,
+                                textAlign: TextAlign.end,
                                 style: TextStyle(
                                   color: deltaColor,
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
                               const SizedBox(height: 2),
-                              Text('Balance: ${change.resultingAmount.toStringAsFixed(2)}'),
+                              ObscurableAmount(
+                                amount:
+                                    'Balance: ${change.resultingAmount.toStringAsFixed(2)}',
+                                visible: widget.showAmounts,
+                                textAlign: TextAlign.end,
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
                             ],
                           ),
                           onLongPress: () => _deleteChange(change),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
+import 'package:money_traker/pages/widgets/obscurable_amount.dart';
 
 class MoneySourceCard extends StatelessWidget {
   final String sourceName;
@@ -20,20 +21,21 @@ class MoneySourceCard extends StatelessWidget {
   Future<void> _showDeleteConfirmationDialog(BuildContext context) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Money Source'),
-        content: Text('Are you sure you want to delete "$sourceName"?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Delete Money Source'),
+            content: Text('Are you sure you want to delete "$sourceName"?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Delete'),
+              ),
+            ],
           ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
     );
     if (confirmed == true) {
       onDelete();
@@ -43,6 +45,7 @@ class MoneySourceCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const double cardHeight = 56;
+    final style = Theme.of(context).textTheme.bodyLarge;
 
     return Slidable(
       key: ValueKey(sourceName),
@@ -82,18 +85,25 @@ class MoneySourceCard extends StatelessWidget {
           child: Row(
             children: [
               Expanded(
-                child: Text(
-                  showAmount
-                      ? '$sourceName: ${amount.toStringAsFixed(2)}'
-                      : '$sourceName: ****',
-                  style: Theme.of(context).textTheme.bodyLarge,
+                child: Text.rich(
+                  TextSpan(
+                    style: style,
+                    children: [
+                      TextSpan(text: '$sourceName: '),
+                      WidgetSpan(
+                        alignment: PlaceholderAlignment.baseline,
+                        baseline: TextBaseline.alphabetic,
+                        child: ObscurableAmount(
+                          amount: amount.toStringAsFixed(2),
+                          visible: showAmount,
+                          style: style,
+                        ),
+                      ),
+                    ],
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-              ),
-              IconButton(
-                tooltip: 'Delete',
-                onPressed: () => _showDeleteConfirmationDialog(context),
-                icon: const Icon(Icons.delete_outline),
-                color: Theme.of(context).colorScheme.error,
               ),
             ],
           ),

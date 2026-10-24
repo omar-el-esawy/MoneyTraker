@@ -1,15 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:money_traker/pages/widgets/obscurable_amount.dart';
 
 /// Simple and modern tiny comparison chart: a slope line from [fromValue] to [toValue]
 /// with endpoint dots and labels.
 class CompareDeltaChart extends StatelessWidget {
   final double fromValue;
   final double toValue;
+  final bool showAmounts;
 
   const CompareDeltaChart({
     super.key,
     required this.fromValue,
     required this.toValue,
+    this.showAmounts = true,
   });
 
   @override
@@ -19,9 +22,11 @@ class CompareDeltaChart extends StatelessWidget {
     final delta = toValue - fromValue;
     final sign = delta > 0 ? '+' : '';
 
-    final Color lineColor = delta > 0
-        ? scheme.primary
-        : (delta < 0 ? scheme.error : scheme.outline);
+    final Color lineColor = !showAmounts
+        ? scheme.outline
+        : (delta > 0
+            ? scheme.primary
+            : (delta < 0 ? scheme.error : scheme.outline));
 
     final background = scheme.surfaceContainerHighest;
     final onBackground = scheme.onSurface;
@@ -51,8 +56,10 @@ class CompareDeltaChart extends StatelessWidget {
                     ),
               ),
               const Spacer(),
-              Text(
-                '$sign${delta.toStringAsFixed(2)}',
+              ObscurableAmount(
+                amount: '$sign${delta.toStringAsFixed(2)}',
+                visible: showAmounts,
+                textAlign: TextAlign.end,
                 style: Theme.of(context).textTheme.labelLarge?.copyWith(
                       color: lineColor,
                       fontWeight: FontWeight.w800,
@@ -72,15 +79,16 @@ class CompareDeltaChart extends StatelessWidget {
                 dotColor: dotColor,
                 gridColor: scheme.outlineVariant,
                 labelColor: onBackground,
+                showAmounts: showAmounts,
               ),
             ),
           ),
           const SizedBox(height: 8),
           Row(
             children: [
-              _ValueChip(label: 'From', value: fromValue),
+              _ValueChip(label: 'From', value: fromValue, showAmount: showAmounts),
               const SizedBox(width: 8),
-              _ValueChip(label: 'To', value: toValue),
+              _ValueChip(label: 'To', value: toValue, showAmount: showAmounts),
             ],
           )
         ],
@@ -92,10 +100,12 @@ class CompareDeltaChart extends StatelessWidget {
 class _ValueChip extends StatelessWidget {
   final String label;
   final double value;
+  final bool showAmount;
 
   const _ValueChip({
     required this.label,
     required this.value,
+    required this.showAmount,
   });
 
   @override
@@ -108,8 +118,9 @@ class _ValueChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: scheme.outlineVariant),
       ),
-      child: Text(
-        '$label: ${value.toStringAsFixed(2)}',
+      child: ObscurableAmount(
+        amount: '$label: ${value.toStringAsFixed(2)}',
+        visible: showAmount,
         style: Theme.of(context).textTheme.labelMedium?.copyWith(
               color: scheme.onSurface,
             ),
@@ -125,6 +136,7 @@ class _SlopeLinePainter extends CustomPainter {
   final Color dotColor;
   final Color gridColor;
   final Color labelColor;
+  final bool showAmounts;
 
   _SlopeLinePainter({
     required this.fromValue,
@@ -133,6 +145,7 @@ class _SlopeLinePainter extends CustomPainter {
     required this.dotColor,
     required this.gridColor,
     required this.labelColor,
+    required this.showAmounts,
   });
 
   @override
@@ -163,6 +176,8 @@ class _SlopeLinePainter extends CustomPainter {
       ..color = gridColor
       ..strokeWidth = 1;
     canvas.drawLine(Offset(rect.left, rect.center.dy), Offset(rect.right, rect.center.dy), gridPaint);
+
+    if (!showAmounts) return;
 
     // Slope line
     final linePaint = Paint()
@@ -245,6 +260,7 @@ class _SlopeLinePainter extends CustomPainter {
         oldDelegate.toValue != toValue ||
         oldDelegate.lineColor != lineColor ||
         oldDelegate.dotColor != dotColor ||
-        oldDelegate.gridColor != gridColor;
+        oldDelegate.gridColor != gridColor ||
+        oldDelegate.showAmounts != showAmounts;
   }
 }

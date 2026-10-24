@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:money_traker/constants/app_constants.dart';
 import 'package:money_traker/model/mission.dart';
@@ -5,12 +7,19 @@ import 'package:money_traker/pages/total_money/total_money_page.dart';
 import 'package:money_traker/pages/history/history_page.dart';
 import 'package:money_traker/pages/insights/insights_page.dart';
 import 'package:money_traker/pages/settings/settings_page.dart';
+import 'package:money_traker/store/amount_visibility_store.dart';
 import 'package:money_traker/store/money_storage.dart';
 import 'package:money_traker/model/money_source.dart';
 import 'package:money_traker/model/money_source_change.dart';
 import 'package:money_traker/model/tag.dart';
 import 'package:money_traker/model/total_money_day.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:money_traker/data/transaction_repository.dart';
+import 'package:money_traker/domain/entities/transaction_entity.dart';
+import 'package:money_traker/services/backup_service.dart';
+import 'package:money_traker/services/notification_service.dart';
+import 'package:money_traker/services/sync_service.dart';
+import 'package:money_traker/tour/app_tour.dart';
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -28,24 +37,51 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   int _selectedIndex = 0;
 
   final MoneyStorage _storage = MoneyStorage();
   List<MoneySource> _sources = [];
   List<TotalMoneyDay> _historyDays = [];
   bool _isLoading = true;
+  bool _showAmounts = true;
+
+  bool _isSmsSyncing = false;
+  List<TransactionEntity> _smsTransactions = [];
 
   Mission? _mission;
+
+  final AppTourAnchors _tourAnchors = AppTourAnchors();
+  List<AppTourStep> _tourSteps = const [];
+  bool _tourVisible = false;
+  int _tourIndex = 0;
+  bool _tourCheckStarted = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initData();
+    _syncSms();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _syncSms();
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
 
   Future<void> _initData() async {
+    var showAmounts = _showAmounts;
     try {
+      showAmounts = await AmountVisibilityStore.load();
       final loadedSources = await _storage.getMoneySources();
       if (loadedSources.isEmpty) {
         // No static/demo data: start with an empty state.
@@ -61,35 +97,124 @@ class _HomePageState extends State<HomePage> {
         _mission = missions.last;
       }
       await _addOrUpdateTodayHistory();
+      unawaited(BackupService.instance.writeAutomaticBackup());
     } catch (e, stack) {
       // Use debugPrint for safer logging in production builds.
       debugPrint('Error in _initData: $e\n$stack');
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
+    }
+    if (!mounted) return;
+    setState(() {
+      _showAmounts = showAmounts;
+      _isLoading = false;
+    });
+    _scheduleTourIfNeeded();
+  }
+
+  void _setShowAmounts(bool value) {
+    setState(() => _showAmounts = value);
+    unawaited(AmountVisibilityStore.save(value));
+  }
+
+  void _scheduleTourIfNeeded() {
+    if (_tourCheckStarted) return;
+    _tourCheckStarted = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      try {
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        if (!mounted || _tourVisible) return;
+        final seen = await AppTourStore.hasSeen();
+        if (!mounted || seen || _tourVisible) return;
+        _startTour();
+      } catch (e, stack) {
+        debugPrint('Tour check failed: $e\n$stack');
+      }
+    });
+  }
+
+  void _startTour() {
+    final steps = AppTourSteps.compose(
+      _tourAnchors,
+      hasSources: _sources.isNotEmpty,
+      hasHistoryDays: _historyDays.isNotEmpty,
+    );
+    setState(() {
+      _tourSteps = steps;
+      _tourIndex = 0;
+      _tourVisible = true;
+      _selectedIndex = steps.first.tab;
+    });
+  }
+
+  void _showTourStep(int index) {
+    if (index < 0 || index >= _tourSteps.length) return;
+    setState(() {
+      _tourIndex = index;
+      _selectedIndex = _tourSteps[index].tab;
+    });
+    if (_selectedIndex == AppTourSteps.historyTab) {
+      _reloadHistoryDaysOnly();
+    }
+  }
+
+  void _tourNext() {
+    if (_tourIndex >= _tourSteps.length - 1) {
+      _finishTour();
+      return;
+    }
+    _showTourStep(_tourIndex + 1);
+  }
+
+  void _tourBack() {
+    if (_tourIndex == 0) return;
+    _showTourStep(_tourIndex - 1);
+  }
+
+  Future<void> _finishTour() async {
+    if (!mounted) return;
+    setState(() {
+      _tourVisible = false;
+      _tourSteps = const [];
+      _tourIndex = 0;
+    });
+    try {
+      await AppTourStore.markSeen();
+    } catch (e, stack) {
+      debugPrint('Tour save failed: $e\n$stack');
     }
   }
 
   /// Apply a delta to historical total days starting from [effectiveDate].
   /// This will ensure a TotalMoneyDay exists for [effectiveDate] (creating one
   /// if needed) and then add [delta] to that day and all subsequent recorded days.
-  Future<int?> _applyDeltaToHistory(DateTime effectiveDate, double delta) async {
-    final dateOnly = DateTime(effectiveDate.year, effectiveDate.month, effectiveDate.day);
+  Future<int?> _applyDeltaToHistory(
+    DateTime effectiveDate,
+    double delta,
+  ) async {
+    final dateOnly = DateTime(
+      effectiveDate.year,
+      effectiveDate.month,
+      effectiveDate.day,
+    );
 
     // Refresh the cached history from storage.
     _historyDays = await _storage.getTotalMoneyDays();
     _historyDays.sort((a, b) => a.date.compareTo(b.date));
 
     // Find an existing entry for the chosen date.
-    final existingIndex = _historyDays.indexWhere((d) =>
-        d.date.year == dateOnly.year && d.date.month == dateOnly.month && d.date.day == dateOnly.day);
+    final existingIndex = _historyDays.indexWhere(
+      (d) =>
+          d.date.year == dateOnly.year &&
+          d.date.month == dateOnly.month &&
+          d.date.day == dateOnly.day,
+    );
 
     if (existingIndex == -1) {
       // Determine a sensible base total for the new day. Prefer the previous day's
       // total if available, otherwise fall back to the current total across sources.
       double baseTotal;
-      final previousDays = _historyDays.where((d) => d.date.isBefore(dateOnly)).toList();
+      final previousDays =
+          _historyDays.where((d) => d.date.isBefore(dateOnly)).toList();
       if (previousDays.isNotEmpty) {
         previousDays.sort((a, b) => a.date.compareTo(b.date));
         baseTotal = previousDays.last.totalAmount;
@@ -101,7 +226,10 @@ class _HomePageState extends State<HomePage> {
         baseTotal = _getTotalMoney();
       }
 
-      final newDay = TotalMoneyDay.create(date: dateOnly, totalAmount: baseTotal + delta);
+      final newDay = TotalMoneyDay.create(
+        date: dateOnly,
+        totalAmount: baseTotal + delta,
+      );
       await _storage.addTotalMoneyDay(newDay);
     } else {
       // Update the existing day by adding the delta.
@@ -136,16 +264,27 @@ class _HomePageState extends State<HomePage> {
 
     // Return the id for the effective date.
     final finalDay = _historyDays.firstWhere(
-      (d) => d.date.year == dateOnly.year && d.date.month == dateOnly.month && d.date.day == dateOnly.day,
+      (d) =>
+          d.date.year == dateOnly.year &&
+          d.date.month == dateOnly.month &&
+          d.date.day == dateOnly.day,
       orElse: () => TotalMoneyDay.create(date: dateOnly, totalAmount: 0.0),
     );
     return finalDay.id;
   }
 
-  Future<void> _addMoneySource(String name, double amount, {DateTime? effectiveDate}) async {
+  Future<void> _addMoneySource(
+    String name,
+    double amount, {
+    DateTime? effectiveDate,
+  }) async {
     final newSource = MoneySource.create(name: name, amount: amount);
     final insertedId = await _storage.addMoneySource(newSource);
-    final persistedSource = MoneySource(id: insertedId, name: name, amount: amount);
+    final persistedSource = MoneySource(
+      id: insertedId,
+      name: name,
+      amount: amount,
+    );
 
     await _storage.addMoneySourceChange(
       MoneySourceChange(
@@ -194,7 +333,10 @@ class _HomePageState extends State<HomePage> {
           resultingAmount: newAmount,
           createdAt: effectiveDate ?? DateTime.now(),
           type: MoneySourceChangeType.edited,
-          note: oldSource.name == newName ? null : 'Renamed from ${oldSource.name}',
+          note:
+              oldSource.name == newName
+                  ? null
+                  : 'Renamed from ${oldSource.name}',
         ),
       );
       final delta = newAmount - oldSource.amount;
@@ -336,7 +478,10 @@ class _HomePageState extends State<HomePage> {
         deltaAmount: delta,
         resultingAmount: updated.amount,
         createdAt: effectiveDate ?? DateTime.now(),
-        type: delta >= 0 ? MoneySourceChangeType.add : MoneySourceChangeType.subtract,
+        type:
+            delta >= 0
+                ? MoneySourceChangeType.add
+                : MoneySourceChangeType.subtract,
       ),
     );
     int? targetDayId;
@@ -347,12 +492,17 @@ class _HomePageState extends State<HomePage> {
     }
 
     final normalizedCategory = categoryName?.trim();
-    if (targetDayId == null || normalizedCategory == null || normalizedCategory.isEmpty) {
+    if (targetDayId == null ||
+        normalizedCategory == null ||
+        normalizedCategory.isEmpty) {
       return;
     }
 
     final tagType = delta >= 0 ? TagType.income : TagType.expense;
-    final tag = await _storage.ensureTag(name: normalizedCategory, type: tagType);
+    final tag = await _storage.ensureTag(
+      name: normalizedCategory,
+      type: tagType,
+    );
     final amountToCategorize = (categoryAmount ?? delta.abs()).abs();
     if (amountToCategorize <= 0.0000001 || tag.id == null) {
       return;
@@ -423,6 +573,39 @@ class _HomePageState extends State<HomePage> {
     await _addOrUpdateTodayHistory();
   }
 
+  Future<void> _syncSms() async {
+    if (_isSmsSyncing) return;
+    if (!mounted) return;
+    setState(() => _isSmsSyncing = true);
+
+    try {
+      final before = _smsTransactions.length;
+      await SyncService.instance.sync();
+      final updated = await TransactionRepository.instance.getAll();
+      final newCount = updated.length - before;
+      final sources = await _storage.getMoneySources();
+      final history = await _storage.getTotalMoneyDays();
+
+      if (!mounted) return;
+      setState(() {
+        _smsTransactions = updated;
+        _sources = sources;
+        _historyDays = history;
+        _isSmsSyncing = false;
+      });
+
+      if (newCount > 0) {
+        await NotificationService.instance.sendSyncNotification(
+          newCount: newCount,
+          newTransactions: updated.take(newCount).toList(),
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isSmsSyncing = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -441,8 +624,12 @@ class _HomePageState extends State<HomePage> {
 
     final pages = [
       TotalMoneyPage(
+        showAmounts: _showAmounts,
+        onShowAmountsChanged: _setShowAmounts,
         moneySources: {for (var s in _sources) s.name: s.amount},
-        sourceIds: {for (var s in _sources.where((s) => s.id != null)) s.name: s.id!},
+        sourceIds: {
+          for (var s in _sources.where((s) => s.id != null)) s.name: s.id!,
+        },
         onAddSource: _addMoneySource,
         onEditSource: (name, newName, newAmount, {DateTime? effectiveDate}) {
           final source = _sources.firstWhere(
@@ -450,7 +637,12 @@ class _HomePageState extends State<HomePage> {
             orElse: () => MoneySource.create(name: '', amount: 0.0),
           );
           if (source.id != null) {
-            _editMoneySource(source.id!, newName, newAmount, effectiveDate: effectiveDate);
+            _editMoneySource(
+              source.id!,
+              newName,
+              newAmount,
+              effectiveDate: effectiveDate,
+            );
           }
         },
         onDeleteSource: (name) {
@@ -462,111 +654,155 @@ class _HomePageState extends State<HomePage> {
             _deleteMoneySource(source.id!);
           }
         },
-        onQuickAdd: (name, delta, {categoryName, categoryAmount, DateTime? effectiveDate}) =>
-            _adjustMoneySourceByName(
-          name,
-          delta,
-          categoryName: categoryName,
-          categoryAmount: categoryAmount,
-          effectiveDate: effectiveDate,
-        ),
-        onQuickSubtract: (name, delta, {categoryName, categoryAmount, DateTime? effectiveDate}) =>
-            _adjustMoneySourceByName(
-          name,
-          -delta,
-          categoryName: categoryName,
-          categoryAmount: categoryAmount,
-          effectiveDate: effectiveDate,
-        ),
-        onTransfer: (from, to, amount) => _transferBetweenSources(from: from, to: to, amount: amount),
+        onQuickAdd:
+            (
+              name,
+              delta, {
+              categoryName,
+              categoryAmount,
+              DateTime? effectiveDate,
+            }) => _adjustMoneySourceByName(
+              name,
+              delta,
+              categoryName: categoryName,
+              categoryAmount: categoryAmount,
+              effectiveDate: effectiveDate,
+            ),
+        onQuickSubtract:
+            (
+              name,
+              delta, {
+              categoryName,
+              categoryAmount,
+              DateTime? effectiveDate,
+            }) => _adjustMoneySourceByName(
+              name,
+              -delta,
+              categoryName: categoryName,
+              categoryAmount: categoryAmount,
+              effectiveDate: effectiveDate,
+            ),
+        onTransfer:
+            (from, to, amount) =>
+                _transferBetweenSources(from: from, to: to, amount: amount),
         mission: _mission,
         onAddMission: _addMission,
       ),
-      HistoryPage(historyDays: _historyDays),
-      const InsightsPage(),
-      SettingsPage(onDataImported: _reloadAllData),
+      HistoryPage(historyDays: _historyDays, showAmounts: _showAmounts),
+      InsightsPage(showAmounts: _showAmounts),
+      SettingsPage(onDataImported: _reloadAllData, onReplayTour: _startTour),
     ];
 
-    return Scaffold(
-      body: SafeArea(child: pages[_selectedIndex]),
-      bottomNavigationBar: SafeArea(
-        minimum: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-        child: Container(
-          decoration: BoxDecoration(
-            color: AppConstants.surfaceColor,
-            borderRadius: BorderRadius.circular(22),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.08),
-                blurRadius: 20,
-                offset: const Offset(0, 6),
-              ),
-            ],
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(22),
-            child: NavigationBarTheme(
-              data: NavigationBarThemeData(
-                backgroundColor: AppConstants.surfaceColor,
-                labelTextStyle: WidgetStateProperty.resolveWith((states) {
-                  final selected = states.contains(WidgetState.selected);
-                  return TextStyle(
-                    fontSize: 12,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                    color: selected ? AppConstants.primaryColor : AppConstants.textTertiary,
-                  );
-                }),
-                iconTheme: WidgetStateProperty.resolveWith((states) {
-                  final selected = states.contains(WidgetState.selected);
-                  return IconThemeData(
-                    color: selected ? AppConstants.primaryColor : AppConstants.textTertiary,
-                    size: selected ? 22 : 20,
-                  );
-                }),
-                indicatorColor: AppConstants.primarySurface,
-              ),
-              child: NavigationBar(
-                selectedIndex: _selectedIndex,
-                labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-                height: 68,
-                destinations: const [
-                  NavigationDestination(
-                    icon: FaIcon(FontAwesomeIcons.wallet),
-                    selectedIcon: FaIcon(FontAwesomeIcons.wallet),
-                    label: 'Total',
-                  ),
-                  NavigationDestination(
-                    icon: FaIcon(FontAwesomeIcons.moneyCheckDollar),
-                    selectedIcon: FaIcon(FontAwesomeIcons.moneyCheckDollar),
-                    label: 'History',
-                  ),
-                  NavigationDestination(
-                    icon: Icon(Icons.insights_outlined),
-                    selectedIcon: Icon(Icons.insights),
-                    label: 'Insights',
-                  ),
-                  NavigationDestination(
-                    icon: Icon(Icons.settings_outlined),
-                    selectedIcon: Icon(Icons.settings),
-                    label: 'Settings',
-                  ),
-                ],
-                onDestinationSelected: (index) {
-                  setState(() {
-                    _selectedIndex = index;
-                  });
+    return AppTourScope(
+      anchors: _tourAnchors,
+      child: Stack(
+        children: [
+          Scaffold(
+            body: SafeArea(child: pages[_selectedIndex]),
+            bottomNavigationBar: SafeArea(
+              minimum: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+              child: Container(
+                key: _tourAnchors.bottomNav,
+                decoration: BoxDecoration(
+                  color: AppConstants.surfaceColor,
+                  borderRadius: BorderRadius.circular(22),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.08),
+                      blurRadius: 20,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(22),
+                  child: NavigationBarTheme(
+                    data: NavigationBarThemeData(
+                      backgroundColor: AppConstants.surfaceColor,
+                      labelTextStyle: WidgetStateProperty.resolveWith((states) {
+                        final selected = states.contains(WidgetState.selected);
+                        return TextStyle(
+                          fontSize: 12,
+                          fontWeight:
+                              selected ? FontWeight.w700 : FontWeight.w500,
+                          color:
+                              selected
+                                  ? AppConstants.primaryColor
+                                  : AppConstants.textTertiary,
+                        );
+                      }),
+                      iconTheme: WidgetStateProperty.resolveWith((states) {
+                        final selected = states.contains(WidgetState.selected);
+                        return IconThemeData(
+                          color:
+                              selected
+                                  ? AppConstants.primaryColor
+                                  : AppConstants.textTertiary,
+                          size: selected ? 22 : 20,
+                        );
+                      }),
+                      indicatorColor: AppConstants.primarySurface,
+                    ),
+                    child: NavigationBar(
+                      selectedIndex: _selectedIndex,
+                      labelBehavior:
+                          NavigationDestinationLabelBehavior.alwaysShow,
+                      height: 68,
+                      destinations: const [
+                        NavigationDestination(
+                          icon: FaIcon(FontAwesomeIcons.wallet),
+                          selectedIcon: FaIcon(FontAwesomeIcons.wallet),
+                          label: 'Total',
+                        ),
+                        NavigationDestination(
+                          icon: FaIcon(FontAwesomeIcons.moneyCheckDollar),
+                          selectedIcon: FaIcon(
+                            FontAwesomeIcons.moneyCheckDollar,
+                          ),
+                          label: 'History',
+                        ),
+                        NavigationDestination(
+                          icon: Icon(Icons.insights_outlined),
+                          selectedIcon: Icon(Icons.insights),
+                          label: 'Insights',
+                        ),
+                        NavigationDestination(
+                          icon: Icon(Icons.settings_outlined),
+                          selectedIcon: Icon(Icons.settings),
+                          label: 'Settings',
+                        ),
+                      ],
+                      onDestinationSelected: (index) {
+                        if (_tourVisible) return;
+                        setState(() {
+                          _selectedIndex = index;
+                        });
 
-                  // History notes are edited inside HistoryPage and saved to DB.
-                  // When leaving and returning, refresh the in-memory list so the UI
-                  // reflects the latest saved notes without needing an app restart.
-                  if (index == 1) {
-                    _reloadHistoryDaysOnly();
-                  }
-                },
+                        // History notes are edited inside HistoryPage and saved to DB.
+                        // When leaving and returning, refresh the in-memory list so the UI
+                        // reflects the latest saved notes without needing an app restart.
+                        if (index == 1) {
+                          _reloadHistoryDaysOnly();
+                        }
+                      },
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
-        ),
+          if (_tourVisible && _tourSteps.isNotEmpty)
+            Positioned.fill(
+              child: AppTourOverlay(
+                step: _tourSteps[_tourIndex],
+                index: _tourIndex,
+                total: _tourSteps.length,
+                onNext: _tourNext,
+                onBack: _tourBack,
+                onSkip: _finishTour,
+              ),
+            ),
+        ],
       ),
     );
   }
