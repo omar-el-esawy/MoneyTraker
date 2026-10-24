@@ -200,15 +200,23 @@ extension GoalCycleCalc on Goal {
       case GoalType.repeatingDays:
         final every = (repeatEveryDays ?? 1).clamp(1, 3650);
         final start = _dateOnly(repeatStartDate ?? anchor);
-        final diff = anchor.difference(start).inDays;
-        final cycles = diff >= 0 ? (diff ~/ every) : -(((-diff - 1) ~/ every) + 1);
+        // A future start date is the first cycle. Do not walk the grid backwards
+        // and count spending from before the goal exists.
+        if (anchor.isBefore(start)) {
+          final nextReset = start.add(Duration(days: every));
+          return GoalCycle(range: DateTimeRange(start: start, end: nextReset), nextReset: nextReset);
+        }
+        final cycles = anchor.difference(start).inDays ~/ every;
         final rangeStart = start.add(Duration(days: cycles * every));
         final nextReset = rangeStart.add(Duration(days: every));
         return GoalCycle(range: DateTimeRange(start: rangeStart, end: nextReset), nextReset: nextReset);
 
       case GoalType.fixedPeriod:
         final s = _dateOnly(periodStart ?? anchor);
-        final e = _dateOnly(periodEnd ?? anchor).add(const Duration(days: 1));
+        var e = _dateOnly(periodEnd ?? s).add(const Duration(days: 1));
+        if (!e.isAfter(s)) {
+          e = s.add(const Duration(days: 1));
+        }
         return GoalCycle(range: DateTimeRange(start: s, end: e), nextReset: e);
     }
   }

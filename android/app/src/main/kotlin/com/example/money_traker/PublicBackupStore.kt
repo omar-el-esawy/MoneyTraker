@@ -120,4 +120,142 @@ object PublicBackupStore {
             (calendar.get(Calendar.MONTH) + 1) * 100 +
             calendar.get(Calendar.DAY_OF_MONTH)
     }
+
+    fun publicDir(): File {
+        return File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            FOLDER,
+        )
+    }
+
+    /// True when this install can see the whole public folder, including files
+    /// left behind by a previous install.
+    fun folderReadable(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return true
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Environment.isExternalStorageManager()) {
+            return true
+        }
+        val listed = try {
+            publicDir().listFiles()
+        } catch (_: SecurityException) {
+            null
+        }
+        if (listed != null) return true
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2 && hasReadStorage(context)) return true
+        return false
+    }
+
+    fun scan(context: Context): Map<String, Any> {
+        val merged = linkedMapOf<String, Long>()
+        listFromDisk()?.let { found ->
+            for ((name, modified) in found) merged[name] = modified
+        }
+        for ((name, modified) in listFromMediaStore(context)) {
+            val current = merged[name]
+            if (current == null || modified > current) merged[name] = modified
+        }
+        val files = merged.map { (name, modified) ->
+            mapOf("name" to name, "modified" to modified)
+        }
+        return mapOf(
+            "readable" to folderReadable(context),
+            "files" to files,
+        )
+    }
+
+    fun stage(context: Context, displayName: String): String {
+        if (!datedName.matches(displayName)) {
+            throw IllegalArgumentException("Unexpected backup name")
+        }
+        val cache = File(context.cacheDir, "restore_$displayName")
+        val direct = File(publicDir(), displayName)
+        if (direct.isFile && direct.canRead()) {
+            direct.copyTo(cache, overwrite = true)
+            return cache.absolutePath
+        }
+        val uri = findDownloadUri(context, displayName)
+            ?: throw IllegalStateException("Backup file not found")
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            cache.outputStream().use { output -> input.copyTo(output) }
+        } ?: throw IllegalStateException("Could not read backup")
+        return cache.absolutePath
+    }
+
+    private fun hasReadStorage(context: Context): Boolean {
+        return context.checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun listFromDisk(): List<Pair<String, Long>>? {
+        val listed = try {
+            publicDir().listFiles()
+        } catch (_: SecurityException) {
+            null
+        } ?: return null
+        return listed.mapNotNull { file ->
+            if (!file.isFile || !datedName.matches(file.name)) return@mapNotNull null
+            file.name to file.lastModified()
+        }
+    }
+
+    private fun listFromMediaStore(context: Context): List<Pair<String, Long>> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return emptyList()
+        val result = mutableListOf<Pair<String, Long>>()
+        val projection = arrayOf(
+            MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.RELATIVE_PATH,
+            MediaStore.MediaColumns.DATE_MODIFIED,
+        )
+        context.contentResolver.query(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+            projection,
+            "${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?",
+            arrayOf("money_traker_%.json"),
+            null,
+        )?.use { cursor ->
+            val nameCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+            val pathCol = cursor.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
+            val modifiedCol = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
+            while (cursor.moveToNext()) {
+                val name = cursor.getString(nameCol) ?: continue
+                if (!datedName.matches(name)) continue
+                if (pathCol >= 0) {
+                    val path = cursor.getString(pathCol) ?: ""
+                    if (path.isNotEmpty() && !path.contains(FOLDER)) continue
+                }
+                val modified = if (modifiedCol >= 0) cursor.getLong(modifiedCol) * 1000 else 0L
+                result.add(name to modified)
+            }
+        }
+        return result
+    }
+
+    private fun findDownloadUri(context: Context, displayName: String): android.net.Uri? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+        val projection = arrayOf(
+            MediaStore.MediaColumns._ID,
+            MediaStore.MediaColumns.RELATIVE_PATH,
+        )
+        context.contentResolver.query(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+            projection,
+            "${MediaStore.MediaColumns.DISPLAY_NAME}=?",
+            arrayOf(displayName),
+            null,
+        )?.use { cursor ->
+            val idCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+            val pathCol = cursor.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
+            while (cursor.moveToNext()) {
+                if (pathCol >= 0) {
+                    val path = cursor.getString(pathCol) ?: ""
+                    if (path.isNotEmpty() && !path.contains(FOLDER)) continue
+                }
+                return ContentUris.withAppendedId(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    cursor.getLong(idCol),
+                )
+            }
+        }
+        return null
+    }
 }

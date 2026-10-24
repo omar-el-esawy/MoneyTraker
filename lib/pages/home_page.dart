@@ -16,6 +16,7 @@ import 'package:money_traker/model/total_money_day.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:money_traker/data/transaction_repository.dart';
 import 'package:money_traker/domain/entities/transaction_entity.dart';
+import 'package:money_traker/pages/first_launch_restore.dart';
 import 'package:money_traker/services/backup_service.dart';
 import 'package:money_traker/services/notification_service.dart';
 import 'package:money_traker/services/sync_service.dart';
@@ -56,20 +57,24 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _tourVisible = false;
   int _tourIndex = 0;
   bool _tourCheckStarted = false;
+  bool _allowSmsSync = false;
+  Completer<void>? _backupAccessResume;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _initData();
-    _syncSms();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _syncSms();
+    if (state != AppLifecycleState.resumed) return;
+    final pending = _backupAccessResume;
+    if (pending != null && !pending.isCompleted) {
+      pending.complete();
     }
+    if (_allowSmsSync) _syncSms();
   }
 
   @override
@@ -80,8 +85,22 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _initData() async {
     var showAmounts = _showAmounts;
+    var publishBackup = true;
     try {
       showAmounts = await AmountVisibilityStore.load();
+      if (!mounted) return;
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+      publishBackup = await settleFirstLaunchRestore(
+        context,
+        waitForSettingsReturn: () {
+          final completer = Completer<void>();
+          _backupAccessResume = completer;
+          return completer.future;
+        },
+      );
+      if (!mounted) return;
+
       final loadedSources = await _storage.getMoneySources();
       if (loadedSources.isEmpty) {
         // No static/demo data: start with an empty state.
@@ -96,8 +115,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       if (missions.isNotEmpty) {
         _mission = missions.last;
       }
-      await _addOrUpdateTodayHistory();
-      unawaited(BackupService.instance.writeAutomaticBackup());
+      if (publishBackup) {
+        await _addOrUpdateTodayHistory();
+        unawaited(BackupService.instance.writeAutomaticBackup());
+      }
     } catch (e, stack) {
       // Use debugPrint for safer logging in production builds.
       debugPrint('Error in _initData: $e\n$stack');
@@ -107,7 +128,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _showAmounts = showAmounts;
       _isLoading = false;
     });
-    _scheduleTourIfNeeded();
+    _allowSmsSync = true;
+    unawaited(_syncSms());
+    if (publishBackup) _scheduleTourIfNeeded();
   }
 
   void _setShowAmounts(bool value) {

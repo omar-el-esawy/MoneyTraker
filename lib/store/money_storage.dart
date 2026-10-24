@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:money_traker/model/mission.dart';
@@ -568,6 +570,128 @@ class MoneyStorage {
       );
     }
     return out;
+  }
+
+  /// Rewrites each day's income and expense tags so they match that day's
+  /// current money change. Adding money and then removing it clears the tag.
+  Future<void> reconcileTaggedDays(List<TotalMoneyDay> days) async {
+    if (days.isEmpty) return;
+    final sorted = [...days]..sort((a, b) => a.date.compareTo(b.date));
+    final ids = [for (final day in sorted) if (day.id != null) day.id!];
+    if (ids.isEmpty) return;
+
+    final db = await database;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    final rows = await db.rawQuery('''
+      SELECT e.dayId, e.tagId, e.amount, e.autoBalanced, t.type AS tagType
+      FROM total_money_day_delta_entries e
+      JOIN tags t ON t.id = e.tagId
+      WHERE e.dayId IN ($placeholders)
+    ''', ids);
+    if (rows.isEmpty) return;
+
+    final byDay = <int, List<Map<String, Object?>>>{};
+    for (final row in rows) {
+      byDay.putIfAbsent(row['dayId'] as int, () => []).add(row);
+    }
+
+    final incomeOthers = await ensureTag(name: 'Others', type: TagType.income);
+    final expenseOthers = await ensureTag(name: 'Others', type: TagType.expense);
+    if (incomeOthers.id == null || expenseOthers.id == null) return;
+
+    for (var i = 1; i < sorted.length; i++) {
+      final day = sorted[i];
+      final dayId = day.id;
+      if (dayId == null) continue;
+      final existing = byDay[dayId];
+      if (existing == null || existing.isEmpty) continue;
+      final delta = day.totalAmount - sorted[i - 1].totalAmount;
+      await _reconcileOneDay(
+        dayId: dayId,
+        delta: delta,
+        rows: existing,
+        incomeOthersId: incomeOthers.id!,
+        expenseOthersId: expenseOthers.id!,
+      );
+    }
+  }
+
+  Future<void> _reconcileOneDay({
+    required int dayId,
+    required double delta,
+    required List<Map<String, Object?>> rows,
+    required int incomeOthersId,
+    required int expenseOthersId,
+  }) async {
+    const eps = 0.0000001;
+    final manual = <int, double>{};
+    final manualType = <int, String>{};
+    for (final row in rows) {
+      if (((row['autoBalanced'] as num?) ?? 0) > 0) continue;
+      final amount = ((row['amount'] as num?) ?? 0).toDouble();
+      if (amount <= eps) continue;
+      final tagId = row['tagId'] as int;
+      manual[tagId] = (manual[tagId] ?? 0) + amount;
+      manualType[tagId] = row['tagType'] as String? ?? TagType.expense.dbValue;
+    }
+
+    var manualIncome = 0.0;
+    var manualExpense = 0.0;
+    for (final entry in manual.entries) {
+      if (manualType[entry.key] == TagType.income.dbValue) {
+        manualIncome += entry.value;
+      } else {
+        manualExpense += entry.value;
+      }
+    }
+
+    if (delta.abs() <= eps && !(manualIncome > eps && manualExpense > eps)) {
+      await replaceDeltaEntriesForDay(dayId: dayId, tagIdToAmount: {});
+      return;
+    }
+
+    if (manualExpense <= eps && manualIncome > delta + 0.01) {
+      if (delta <= eps) {
+        await replaceDeltaEntriesForDay(dayId: dayId, tagIdToAmount: {});
+        return;
+      }
+      final scale = delta / manualIncome;
+      for (final id in manual.keys.toList()) {
+        if (manualType[id] == TagType.income.dbValue) {
+          manual[id] = manual[id]! * scale;
+        }
+      }
+      manualIncome = delta;
+    }
+
+    if (manualIncome <= eps && delta < 0 && manualExpense > (-delta) + 0.01) {
+      final target = -delta;
+      final scale = target / manualExpense;
+      for (final id in manual.keys.toList()) {
+        if (manualType[id] != TagType.income.dbValue) {
+          manual[id] = manual[id]! * scale;
+        }
+      }
+      manualExpense = target;
+    }
+
+    final autoIncome = math.max(0.0, delta + manualExpense - manualIncome);
+    final autoExpense = math.max(0.0, manualIncome - manualExpense - delta);
+    final snap = Map<int, double>.from(manual);
+    final autoIds = <int>{};
+    if (autoIncome > eps) {
+      snap[incomeOthersId] = (snap[incomeOthersId] ?? 0) + autoIncome;
+      autoIds.add(incomeOthersId);
+    }
+    if (autoExpense > eps) {
+      snap[expenseOthersId] = (snap[expenseOthersId] ?? 0) + autoExpense;
+      autoIds.add(expenseOthersId);
+    }
+    await replaceDeltaEntriesForDay(
+      dayId: dayId,
+      tagIdToAmount: snap,
+      autoBalancedTagIds: autoIds,
+    );
   }
 
   Future<Map<DateTime, double>> amountsForTag(int tagId) async {

@@ -5,6 +5,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:money_traker/constants/app_constants.dart';
 import 'package:money_traker/model/goal.dart';
 import 'package:money_traker/model/tag.dart';
+import 'package:money_traker/pages/goals/goal_detail_view.dart';
 import 'package:money_traker/pages/goals/logic/goal_engine.dart';
 import 'package:money_traker/pages/widgets/obscurable_amount.dart';
 import 'package:money_traker/store/money_storage.dart';
@@ -181,7 +182,7 @@ class _InsightsPageState extends State<InsightsPage> {
     return values.entries.where((e) => e.value > 0.0001).toList();
   }
 
-  bool _isOthers(String name) => name.trim().toLowerCase() == 'others';
+  bool _isOthers(String name) => name.trim() == 'Others';
 
   Color _sliceColor(
     List<MapEntry<String, double>> entries,
@@ -320,16 +321,8 @@ class _InsightsPageState extends State<InsightsPage> {
     final taggedIncome = sumMap(income);
     final taggedExpense = sumMap(expense);
 
-    final computedOthersIncome = (totalIncomeDelta - taggedIncome);
-    final computedOthersExpense = (totalExpenseDelta - taggedExpense);
-
-    // Never show negative Others due to rounding; clamp to 0.
-    income['Others'] =
-        (income['Others'] ?? 0) +
-        (computedOthersIncome > 0 ? computedOthersIncome : 0);
-    expense['Others'] =
-        (expense['Others'] ?? 0) +
-        (computedOthersExpense > 0 ? computedOthersExpense : 0);
+    income['Others'] = (income['Others'] ?? 0) + uncategorizedGap(totalIncomeDelta, taggedIncome);
+    expense['Others'] = (expense['Others'] ?? 0) + uncategorizedGap(totalExpenseDelta, taggedExpense);
 
     // sort maps by value desc but keep Others present
     Map<String, double> sortByValueDesc(Map<String, double> m) {
@@ -395,7 +388,7 @@ class _InsightsPageState extends State<InsightsPage> {
 
   Future<void> _deleteTagByName(String tagName, TagType type) async {
     final normalized = tagName.trim();
-    if (normalized.toLowerCase() == 'others') {
+    if (_isOthers(normalized)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('The "Others" tag can\'t be deleted.')),
       );
@@ -463,7 +456,7 @@ class _InsightsPageState extends State<InsightsPage> {
 
   Future<void> _renameTagByName(String tagName, TagType type) async {
     final normalized = tagName.trim();
-    if (normalized.toLowerCase() == 'others') {
+    if (_isOthers(normalized)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('The "Others" tag can\'t be renamed.')),
       );
@@ -894,7 +887,17 @@ class _InsightsPageState extends State<InsightsPage> {
     final pct = p.percent.isNaN ? 0.0 : p.percent.clamp(0.0, 1.0);
     final verb = spentMode ? 'Spent' : 'Saved';
 
-    return Container(
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(22),
+        onTap: () async {
+          await Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => GoalDetailPageView(goal: p.goal)),
+          );
+          await _loadMainGoal();
+        },
+        child: Container(
       padding: const EdgeInsets.all(16),
       decoration: _cardDecoration(),
       child: Column(
@@ -1000,6 +1003,8 @@ class _InsightsPageState extends State<InsightsPage> {
             ),
           ),
         ],
+      ),
+        ),
       ),
     );
   }

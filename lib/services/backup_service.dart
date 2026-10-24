@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:money_traker/data/database_helper.dart';
+import 'package:money_traker/services/public_backup.dart';
 import 'package:money_traker/services/sms_feature_store.dart';
 import 'package:money_traker/services/sync_service.dart';
 import 'package:money_traker/store/money_storage.dart';
@@ -29,6 +30,7 @@ class BackupService {
   static const phoneFolder = 'Downloads/MoneyTracker';
   static const _lastBackupKey = 'last_auto_backup_at';
   static const _lastPhoneBackupKey = 'last_phone_backup_at';
+  static const restoreDecidedKey = 'public_backup_restore_decided_v1';
   static const _latestName = 'latest.json';
   static const _phoneChannel = MethodChannel('com.example.money_traker/backup');
 
@@ -230,5 +232,83 @@ class BackupService {
     } else {
       await prefs.remove(SyncService.lastSyncPrefsKey);
     }
+  }
+
+  bool get supportsPublicRestore {
+    if (kIsWeb) return false;
+    return Platform.isAndroid;
+  }
+
+  Future<bool> isRestorePromptDecided() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(restoreDecidedKey) ?? false;
+  }
+
+  Future<void> markRestorePromptDecided() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(restoreDecidedKey, true);
+  }
+
+  /// `granted` when the folder can be read now, `settings` when the system
+  /// settings screen was opened, `denied` when the user refused.
+  Future<String> requestPublicBackupAccess() async {
+    if (!supportsPublicRestore) return 'granted';
+    final status = await _phoneChannel.invokeMethod<String>('requestPublicBackupAccess');
+    return status ?? 'denied';
+  }
+
+  Future<PublicBackupScan> scanPublicBackups() async {
+    if (!supportsPublicRestore) {
+      return const PublicBackupScan(readable: true, files: []);
+    }
+    final raw = await _phoneChannel.invokeMethod<Map>('scanPublicBackups');
+    if (raw == null) {
+      return const PublicBackupScan(readable: false, files: []);
+    }
+    final files = <PublicBackupEntry>[];
+    final listed = raw['files'];
+    if (listed is List) {
+      for (final item in listed) {
+        if (item is! Map) continue;
+        final name = item['name'];
+        if (name is! String || !backupFileName.hasMatch(name)) continue;
+        final modified = item['modified'];
+        files.add(
+          PublicBackupEntry(
+            name: name,
+            modifiedMillis: modified is num ? modified.toInt() : 0,
+          ),
+        );
+      }
+    }
+    return PublicBackupScan(readable: raw['readable'] == true, files: files);
+  }
+
+  Future<RestorableBackup?> newestRestorableBackup(List<PublicBackupEntry> files) async {
+    final sorted = [...files]..sort(comparePublicBackupEntries);
+    for (final file in sorted) {
+      try {
+        final path = await _phoneChannel.invokeMethod<String>('stagePublicBackup', {
+          'name': file.name,
+        });
+        if (path == null || path.isEmpty) continue;
+        final staged = File(path);
+        final decoded = json.decode(await staged.readAsString());
+        try {
+          await staged.delete();
+        } catch (_) {}
+        if (decoded is! Map) continue;
+        final map = Map<String, dynamic>.from(decoded);
+        if (!backupJsonHasUserData(map)) continue;
+        return RestorableBackup(
+          name: file.name,
+          dateLabel: backupDateLabel(file.name) ?? file.name,
+          json: map,
+        );
+      } catch (e, stack) {
+        debugPrint('Skip public backup ${file.name}: $e\n$stack');
+      }
+    }
+    return null;
   }
 }

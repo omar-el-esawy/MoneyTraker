@@ -126,9 +126,12 @@ class _GoalsPageState extends State<GoalsPage> {
 
                     return InkWell(
                       borderRadius: BorderRadius.circular(16),
-                                      onTap: () => Navigator.of(ctx).push(
-                                        MaterialPageRoute(builder: (_) => GoalDetailPageView(goal: g)),
-                                      ),
+                                      onTap: () async {
+                        await Navigator.of(ctx).push(
+                          MaterialPageRoute(builder: (_) => GoalDetailPageView(goal: g)),
+                        );
+                        await _load();
+                      },
                       child: Container(
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
@@ -165,10 +168,12 @@ class _GoalsPageState extends State<GoalsPage> {
                                 ),
                                 PopupMenuButton<String>(
                                   onSelected: (v) {
+                                    if (v == 'edit') _editGoal(g);
                                     if (v == 'toggle') _toggleActive(g);
                                     if (v == 'delete') _deleteGoal(g);
                                   },
                                   itemBuilder: (ctx) => [
+                                    const PopupMenuItem(value: 'edit', child: Text('Edit')),
                                     PopupMenuItem(value: 'toggle', child: Text(g.isActive ? 'Pause' : 'Resume')),
                                     const PopupMenuItem(value: 'delete', child: Text('Delete')),
                                   ],
@@ -196,6 +201,22 @@ class _GoalsPageState extends State<GoalsPage> {
                                   ' / ${g.targetAmount.toStringAsFixed(2)}',
                                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: const Color(0xFF9CA3AF)),
                                 ),
+                                if (!g.isActive)
+                                  Text(
+                                    'Paused',
+                                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                                      color: const Color(0xFF9CA3AF),
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  )
+                                else if (g.isMain)
+                                  Text(
+                                    'Main',
+                                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                                      color: accent,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
                                 const Spacer(),
                                 if (p != null)
                                   Text(

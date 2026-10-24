@@ -63,6 +63,7 @@ class _HistoryPageState extends State<HistoryPage> {
         .where((d) => d.id != null)
         .map((d) => d.id!)
         .toList(growable: false);
+    await _storage.reconcileTaggedDays(_historyDays);
     final summaries = await _storage.getDeltaSummariesForDays(ids);
     if (!mounted) return;
     setState(() => _deltaSummariesByDayId = summaries);
