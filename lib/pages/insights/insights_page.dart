@@ -5,6 +5,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:money_traker/constants/app_constants.dart';
 import 'package:money_traker/model/goal.dart';
 import 'package:money_traker/model/tag.dart';
+import 'package:money_traker/pages/goals/goal_detail_view.dart';
 import 'package:money_traker/pages/goals/logic/goal_engine.dart';
 import 'package:money_traker/pages/widgets/obscurable_amount.dart';
 import 'package:money_traker/store/money_storage.dart';
@@ -894,7 +895,17 @@ class _InsightsPageState extends State<InsightsPage> {
     final pct = p.percent.isNaN ? 0.0 : p.percent.clamp(0.0, 1.0);
     final verb = spentMode ? 'Spent' : 'Saved';
 
-    return Container(
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(22),
+        onTap: () async {
+          await Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => GoalDetailPageView(goal: p.goal)),
+          );
+          await _loadMainGoal();
+        },
+        child: Container(
       padding: const EdgeInsets.all(16),
       decoration: _cardDecoration(),
       child: Column(
@@ -1000,6 +1011,8 @@ class _InsightsPageState extends State<InsightsPage> {
             ),
           ),
         ],
+      ),
+        ),
       ),
     );
   }

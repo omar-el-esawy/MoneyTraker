@@ -69,7 +69,12 @@ class _EditGoalSheetState extends State<EditGoalSheet> {
   }
 
   Future<void> _loadTags() async {
-    final tags = await _storage.getTags(type: TagType.expense);
+    final tags = await _storage.getTags();
+    tags.sort((a, b) {
+      final byType = a.type.index.compareTo(b.type.index);
+      if (byType != 0) return byType;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
     if (!mounted) return;
     setState(() {
       _expenseTags = tags;
@@ -354,8 +359,9 @@ class _EditGoalSheetState extends State<EditGoalSheet> {
                     runSpacing: 8,
                     children: _expenseTags.map((t) {
                       final selected = _excludedTagIds.contains(t.id);
+                      final kind = t.type == TagType.income ? 'Income' : 'Expense';
                       return FilterChip(
-                        label: Text(t.name),
+                        label: Text('${t.name} · $kind'),
                         selected: selected,
                         onSelected: (v) {
                           if (t.id == null) return;

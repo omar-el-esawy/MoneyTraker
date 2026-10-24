@@ -7,6 +7,7 @@ import 'package:money_traker/model/mission.dart';
 import 'package:money_traker/model/goal.dart';
 import 'package:money_traker/model/tag.dart';
 import 'package:money_traker/store/money_storage.dart';
+import 'package:money_traker/pages/goals/goal_detail_view.dart';
 import 'package:money_traker/pages/goals/goals_page.dart';
 import 'package:money_traker/pages/goals/logic/goal_engine.dart';
 import 'package:money_traker/pages/widgets/amount_calculator_sheet.dart';
@@ -291,7 +292,14 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
 
                       return InkWell(
                         borderRadius: BorderRadius.circular(16),
-                        onTap: _openGoals,
+                        onTap: () async {
+                          await Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => GoalDetailPageView(goal: p.goal),
+                            ),
+                          );
+                          await _loadGoals();
+                        },
                         child: Container(
                           width: 220,
                           padding: const EdgeInsets.all(16),

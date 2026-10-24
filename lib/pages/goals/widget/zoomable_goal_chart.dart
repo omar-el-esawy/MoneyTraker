@@ -62,6 +62,14 @@ class _ZoomableGoalChartState extends State<ZoomableGoalChart> with TickerProvid
     _loadGoalProgress();
   }
 
+  @override
+  void didUpdateWidget(covariant ZoomableGoalChart oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.goal != widget.goal) {
+      _loadGoalProgress();
+    }
+  }
+
   Future<void> _loadGoalProgress() async {
     if (!mounted) return;
     setState(() => _loading = true);
@@ -80,11 +88,14 @@ class _ZoomableGoalChartState extends State<ZoomableGoalChart> with TickerProvid
 
       final dayProgress = <GoalDayProgress>[];
       double cumulativeProgress = 0;
-
+      final days = <DateTime>{};
       for (final dayRow in allDaysQuery) {
-        final dateStr = dayRow['date'] as String;
-        final date = DateTime.parse(dateStr);
-        final dateOnly = DateTime(date.year, date.month, date.day);
+        final date = DateTime.parse(dayRow['date'] as String);
+        days.add(DateTime(date.year, date.month, date.day));
+      }
+      final sortedDays = days.toList()..sort();
+
+      for (final dateOnly in sortedDays) {
         final nextDay = dateOnly.add(const Duration(days: 1));
 
         // Get entries for this specific day
@@ -351,6 +362,19 @@ class _ZoomableGoalChartState extends State<ZoomableGoalChart> with TickerProvid
   }
 }
 
+double _chartX(
+  DateTime date,
+  DateTime visibleStart,
+  DateTime visibleEnd,
+  double padding,
+  double chartWidth,
+) {
+  final spanDays = visibleEnd.difference(visibleStart).inDays.abs();
+  if (spanDays <= 0) return padding + chartWidth / 2;
+  final daysFromStart = date.difference(visibleStart).inDays.clamp(0, spanDays).toDouble();
+  return padding + (daysFromStart / spanDays) * chartWidth;
+}
+
 class _LineChartPainter extends CustomPainter {
   final List<GoalDayProgress> data;
   final Goal goal;
@@ -398,8 +422,6 @@ class _LineChartPainter extends CustomPainter {
 
     if (visibleData.isEmpty) return;
 
-    final totalDuration = visibleEnd.difference(visibleStart).inDays.abs().toDouble();
-
     // Draw grid lines
     final gridPaint = Paint()
       ..color = const Color(0xFFF0F0F0)
@@ -435,15 +457,9 @@ class _LineChartPainter extends CustomPainter {
 
     for (int i = 0; i < visibleData.length; i++) {
       final d = visibleData[i];
-      final daysFromStart = d.date.difference(visibleStart).inDays.toDouble();
-      final x = padding + (daysFromStart / totalDuration) * chartWidth;
+      final x = _chartX(d.date, visibleStart, visibleEnd, padding, chartWidth);
       final y = padding + chartHeight - ((d.progress - minProgress) / safeRange * chartHeight);
-
-      if (i == 0) {
-        fillPath.lineTo(x, y);
-      } else {
-        fillPath.lineTo(x, y);
-      }
+      fillPath.lineTo(x, y);
     }
 
     fillPath.lineTo(size.width - padding, size.height - padding);
@@ -459,14 +475,12 @@ class _LineChartPainter extends CustomPainter {
     // Re-draw line
     for (int i = 0; i < visibleData.length; i++) {
       final d = visibleData[i];
-      final daysFromStart = d.date.difference(visibleStart).inDays.toDouble();
-      final x = padding + (daysFromStart / totalDuration) * chartWidth;
+      final x = _chartX(d.date, visibleStart, visibleEnd, padding, chartWidth);
       final y = padding + chartHeight - ((d.progress - minProgress) / safeRange * chartHeight);
 
       if (i > 0) {
         final prevD = visibleData[i - 1];
-        final prevDaysFromStart = prevD.date.difference(visibleStart).inDays.toDouble();
-        final prevX = padding + (prevDaysFromStart / totalDuration) * chartWidth;
+        final prevX = _chartX(prevD.date, visibleStart, visibleEnd, padding, chartWidth);
         final prevY = padding + chartHeight - ((prevD.progress - minProgress) / safeRange * chartHeight);
         canvas.drawLine(Offset(prevX, prevY), Offset(x, y), linePaint);
       }
@@ -475,8 +489,7 @@ class _LineChartPainter extends CustomPainter {
     // Draw points
     for (int i = 0; i < visibleData.length; i++) {
       final d = visibleData[i];
-      final daysFromStart = d.date.difference(visibleStart).inDays.toDouble();
-      final x = padding + (daysFromStart / totalDuration) * chartWidth;
+      final x = _chartX(d.date, visibleStart, visibleEnd, padding, chartWidth);
       final y = padding + chartHeight - ((d.progress - minProgress) / safeRange * chartHeight);
 
       canvas.drawCircle(
@@ -539,11 +552,11 @@ class _HistogramPainter extends CustomPainter {
 
     if (data.isEmpty) return;
 
-    // Calculate min/max for daily delta
+    // Keep zero inside the scale so bars grow up or down from the same line.
     final allDeltas = data.map((d) => d.dailyDelta).toList();
-    final minDelta = allDeltas.reduce((a, b) => a < b ? a : b);
-    final maxDelta = allDeltas.reduce((a, b) => a > b ? a : b);
-    final deltaRange = (maxDelta - minDelta).abs();
+    final minDelta = math.min(0, allDeltas.reduce((a, b) => a < b ? a : b));
+    final maxDelta = math.max(0, allDeltas.reduce((a, b) => a > b ? a : b));
+    final deltaRange = maxDelta - minDelta;
     final safeRange = deltaRange > 0 ? deltaRange : 1.0;
 
     // Filter visible data
@@ -555,8 +568,8 @@ class _HistogramPainter extends CustomPainter {
 
     if (visibleData.isEmpty) return;
 
-    final totalDuration = visibleEnd.difference(visibleStart).inDays.abs().toDouble();
-    final barWidth = (chartWidth / (totalDuration + 1)) * 0.8;
+    final spanDays = visibleEnd.difference(visibleStart).inDays.abs();
+    final barWidth = (chartWidth / (math.max(1, spanDays) + 1)) * 0.8;
 
     // Draw grid lines
     final gridPaint = Paint()
@@ -578,19 +591,22 @@ class _HistogramPainter extends CustomPainter {
         ..strokeWidth = 1,
     );
 
-    // Draw bars
+    double yFor(double value) => padding + chartHeight - ((value - minDelta) / safeRange * chartHeight);
+
+    // Draw bars from the zero line so a negative day stays inside the chart.
     for (int i = 0; i < visibleData.length; i++) {
       final d = visibleData[i];
-      final daysFromStart = d.date.difference(visibleStart).inDays.toDouble();
-      final x = padding + (daysFromStart / totalDuration) * chartWidth;
-      final barHeight = (d.dailyDelta / safeRange) * chartHeight;
-      final y = padding + chartHeight - barHeight;
+      final x = _chartX(d.date, visibleStart, visibleEnd, padding, chartWidth);
+      final yValue = yFor(d.dailyDelta);
+      final yZero = yFor(0);
+      final top = math.min(yValue, yZero);
+      final barHeight = math.max(1.0, (yValue - yZero).abs());
 
       final color = d.dailyDelta >= 0 ? AppConstants.primaryColor : Colors.red;
 
       canvas.drawRRect(
         RRect.fromRectAndRadius(
-          Rect.fromLTWH(x - barWidth / 2, y, barWidth, barHeight.abs()),
+          Rect.fromLTWH(x - barWidth / 2, top, barWidth, barHeight),
           const Radius.circular(2),
         ),
         Paint()
