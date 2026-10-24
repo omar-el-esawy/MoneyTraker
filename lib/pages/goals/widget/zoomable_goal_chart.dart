@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:money_traker/constants/app_constants.dart';
 import 'package:money_traker/model/goal.dart';
-import 'package:money_traker/model/tag.dart';
+import 'package:money_traker/pages/goals/logic/goal_engine.dart';
 import 'package:money_traker/store/money_storage.dart';
 
 enum GoalChartMode { lineChart, histogram }
@@ -75,69 +75,16 @@ class _ZoomableGoalChartState extends State<ZoomableGoalChart> with TickerProvid
     setState(() => _loading = true);
 
     try {
-      final cycle = widget.goal.currentCycle().range;
-      final db = await _storage.database;
-      final excludedIds = widget.goal.excludedTagIds.toSet();
-
-      // Get all days in the cycle
-      final allDaysQuery = await db.rawQuery('''
-        SELECT DISTINCT date FROM total_money_days
-        WHERE date >= ? AND date < ?
-        ORDER BY date
-      ''', [cycle.start.toIso8601String(), cycle.end.toIso8601String()]);
-
-      final dayProgress = <GoalDayProgress>[];
-      double cumulativeProgress = 0;
-      final days = <DateTime>{};
-      for (final dayRow in allDaysQuery) {
-        final date = DateTime.parse(dayRow['date'] as String);
-        days.add(DateTime(date.year, date.month, date.day));
-      }
-      final sortedDays = days.toList()..sort();
-
-      for (final dateOnly in sortedDays) {
-        final nextDay = dateOnly.add(const Duration(days: 1));
-
-        // Get entries for this specific day
-        final dayEntries = await db.rawQuery('''
-          SELECT e.amount, e.tagId, t.type
-          FROM total_money_day_delta_entries e
-          JOIN tags t ON t.id = e.tagId
-          JOIN total_money_days d ON d.id = e.dayId
-          WHERE d.date >= ? AND d.date < ?
-        ''', [dateOnly.toIso8601String(), nextDay.toIso8601String()]);
-
-        double dailyDelta = 0;
-
-        for (final entry in dayEntries) {
-          final tagId = entry['tagId'] as int;
-          if (excludedIds.contains(tagId)) continue;
-
-          final type = TagTypeDb.fromDb(entry['type'] as String);
-          final amount = (entry['amount'] as num).toDouble();
-
-          if (widget.goal.direction == GoalDirection.spendingLimit) {
-            if (type == TagType.expense) {
-              dailyDelta += amount;
-            }
-          } else {
-            // savingsTarget
-            if (type == TagType.income) {
-              dailyDelta += amount;
-            } else if (type == TagType.expense) {
-              dailyDelta -= amount;
-            }
-          }
-        }
-
-        cumulativeProgress += dailyDelta;
-
-        dayProgress.add(GoalDayProgress(
-          date: dateOnly,
-          progress: cumulativeProgress,
-          dailyDelta: dailyDelta,
-        ));
-      }
+      final series = await GoalEngine(_storage).buildSeries(widget.goal);
+      final dayProgress = [
+        for (final point in series.days)
+          if (point.dailyDelta.abs() > 0.0000001)
+            GoalDayProgress(
+              date: point.date,
+              progress: point.progress,
+              dailyDelta: point.dailyDelta,
+            ),
+      ];
 
       if (!mounted) return;
       setState(() {

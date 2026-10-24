@@ -182,7 +182,7 @@ class _InsightsPageState extends State<InsightsPage> {
     return values.entries.where((e) => e.value > 0.0001).toList();
   }
 
-  bool _isOthers(String name) => name.trim().toLowerCase() == 'others';
+  bool _isOthers(String name) => name.trim() == 'Others';
 
   Color _sliceColor(
     List<MapEntry<String, double>> entries,
@@ -321,16 +321,8 @@ class _InsightsPageState extends State<InsightsPage> {
     final taggedIncome = sumMap(income);
     final taggedExpense = sumMap(expense);
 
-    final computedOthersIncome = (totalIncomeDelta - taggedIncome);
-    final computedOthersExpense = (totalExpenseDelta - taggedExpense);
-
-    // Never show negative Others due to rounding; clamp to 0.
-    income['Others'] =
-        (income['Others'] ?? 0) +
-        (computedOthersIncome > 0 ? computedOthersIncome : 0);
-    expense['Others'] =
-        (expense['Others'] ?? 0) +
-        (computedOthersExpense > 0 ? computedOthersExpense : 0);
+    income['Others'] = (income['Others'] ?? 0) + uncategorizedGap(totalIncomeDelta, taggedIncome);
+    expense['Others'] = (expense['Others'] ?? 0) + uncategorizedGap(totalExpenseDelta, taggedExpense);
 
     // sort maps by value desc but keep Others present
     Map<String, double> sortByValueDesc(Map<String, double> m) {
@@ -396,7 +388,7 @@ class _InsightsPageState extends State<InsightsPage> {
 
   Future<void> _deleteTagByName(String tagName, TagType type) async {
     final normalized = tagName.trim();
-    if (normalized.toLowerCase() == 'others') {
+    if (_isOthers(normalized)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('The "Others" tag can\'t be deleted.')),
       );
@@ -464,7 +456,7 @@ class _InsightsPageState extends State<InsightsPage> {
 
   Future<void> _renameTagByName(String tagName, TagType type) async {
     final normalized = tagName.trim();
-    if (normalized.toLowerCase() == 'others') {
+    if (_isOthers(normalized)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('The "Others" tag can\'t be renamed.')),
       );

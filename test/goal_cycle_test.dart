@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:money_traker/model/goal.dart';
+import 'package:money_traker/pages/goals/logic/goal_engine.dart';
 
 Goal _goal({
   required GoalType type,
@@ -70,5 +71,72 @@ void main() {
 
     expect(cycle.range.start, DateTime(2026, 11, 10));
     expect(cycle.range.end.isAfter(cycle.range.start), isTrue);
+  });
+
+  test('spending limit matches insights when the drop has no category', () {
+    final expense = insightsStyleExpense(balanceDrops: 10000, taggedExpenses: 0);
+
+    expect(expense, 10000);
+  });
+
+  test('spending limit matches insights and does not add categories twice', () {
+    final expense = insightsStyleExpense(balanceDrops: 10000, taggedExpenses: 10000);
+
+    expect(expense, 10000);
+  });
+
+  test('spending limit keeps categorized spending above the balance drop', () {
+    final expense = insightsStyleExpense(balanceDrops: 4000, taggedExpenses: 10000);
+
+    expect(expense, 10000);
+  });
+
+  test('income does not reduce the insights expense total', () {
+    final expense = insightsStyleExpense(balanceDrops: 10000, taggedExpenses: 0);
+
+    expect(uncategorizedGap(50000, 0), 50000);
+    expect(expense, 10000);
+  });
+
+  test('an excluded category is removed from the insights expense total', () {
+    final expense = insightsStyleExpense(
+      balanceDrops: 10000,
+      taggedExpenses: 10000,
+      excludedExpenses: 10000,
+    );
+
+    expect(expense, 0);
+  });
+
+  test('a categorized decrease is not counted twice', () {
+    final day = goalDayContribution(
+      netChange: -10,
+      tags: const [GoalTaggedAmount(tagId: 1, income: false, amount: 10)],
+      excludedTagIds: const {},
+    );
+
+    expect(day.expense, 10);
+    expect(day.income, 0);
+  });
+
+  test('savings still treats an uncategorized balance drop as spending', () {
+    final day = goalDayContribution(
+      netChange: -10,
+      tags: const [],
+      excludedTagIds: const {},
+    );
+
+    expect(day.expense, 10);
+    expect(day.deltaFor(GoalDirection.savingsTarget), -10);
+  });
+
+  test('an excluded category stays out of the savings goal', () {
+    final day = goalDayContribution(
+      netChange: -10,
+      tags: const [GoalTaggedAmount(tagId: 1, income: false, amount: 10)],
+      excludedTagIds: const {1},
+    );
+
+    expect(day.expense, 0);
   });
 }

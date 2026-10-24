@@ -22,38 +22,89 @@ class SmsRuleEngine {
         start: match.start,
         end: match.end,
         text: text,
-        isNumber: _numberPattern.hasMatch(normalizeWord(text)) &&
-            _numberPattern.stringMatch(normalizeWord(text)) == normalizeWord(text),
+        isNumber: singleNumberIn(text) != null,
       );
     }).toList();
   }
 
-  static String normalizeWord(String raw) {
-    return raw.replaceAll(RegExp(r'''^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$''', unicode: true), '');
+  /// The number inside [text] when letters or symbols are glued to exactly one number.
+  /// `500EGP` and `EGP1,250.50` qualify. A date like `15/10/2026` does not.
+  static SmsNumberSpan? singleNumberIn(String text, {int offset = 0}) {
+    final matches = _numberPattern.allMatches(text).toList();
+    if (matches.length != 1) return null;
+    final match = matches.single;
+    return SmsNumberSpan(
+      start: offset + match.start,
+      end: offset + match.end,
+      text: match.group(0)!,
+    );
   }
 
+  static String normalizeWord(String raw) {
+    return raw.replaceAll(
+      RegExp(r'''^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$''', unicode: true),
+      '',
+    );
+  }
+
+  static String phraseText(Iterable<String> words) {
+    return words.map(normalizeWord).where((word) => word.isNotEmpty).join(' ');
+  }
+
+  static List<String> phraseParts(String word) {
+    return word
+        .trim()
+        .split(RegExp(r'\s+'))
+        .map((part) => normalizeWord(part).toLowerCase())
+        .where((part) => part.isNotEmpty)
+        .toList();
+  }
+
+  /// Longer phrases win, then the earliest phrase in the message.
   static String detectType(String body, List<SmsTypeWord> words) {
     SmsTypeWord? best;
     var bestPos = 1 << 30;
+    var bestLength = 0;
     for (final word in words) {
-      final pos = firstIndexOfWord(body, word.word);
-      if (pos >= 0 && pos < bestPos) {
-        bestPos = pos;
-        best = word;
-      }
+      final hit = locateWord(body, word.word);
+      if (hit == null) continue;
+      final length = phraseParts(word.word).length;
+      final better =
+          length > bestLength || (length == bestLength && hit.start < bestPos);
+      if (!better) continue;
+      best = word;
+      bestPos = hit.start;
+      bestLength = length;
     }
     return best?.typeHint ?? '';
   }
 
   static int firstIndexOfWord(String body, String word) {
-    final target = normalizeWord(word).toLowerCase();
-    if (target.isEmpty) return -1;
-    for (final token in tokenize(body)) {
-      if (_sameTypeWord(normalizeWord(token.text).toLowerCase(), target)) {
-        return token.start;
+    return locateWord(body, word)?.start ?? -1;
+  }
+
+  /// Finds [word] as one token, or as consecutive tokens when [word] contains spaces.
+  static ({int start, int end})? locateWord(String body, String word) {
+    final parts = phraseParts(word);
+    if (parts.isEmpty) return null;
+    final tokens = tokenize(body);
+    for (var i = 0; i <= tokens.length - parts.length; i++) {
+      var matched = true;
+      for (var j = 0; j < parts.length; j++) {
+        final token = normalizeWord(tokens[i + j].text).toLowerCase();
+        final same =
+            parts.length == 1
+                ? _sameTypeWord(token, parts[j])
+                : token == parts[j];
+        if (!same) {
+          matched = false;
+          break;
+        }
       }
+      if (!matched) continue;
+      return (start: tokens[i].start, end: tokens[i + parts.length - 1].end);
     }
-    return -1;
+    return null;
   }
 
   static int firstExactWordIndex(String body, String word) {
@@ -66,7 +117,10 @@ class SmsRuleEngine {
   }
 
   /// Longer words win, then the earliest word in the message.
-  static List<SmsCategoryRule> rankCategoryRules(String body, List<SmsCategoryRule> rules) {
+  static List<SmsCategoryRule> rankCategoryRules(
+    String body,
+    List<SmsCategoryRule> rules,
+  ) {
     final hits = <({SmsCategoryRule rule, int pos, int length})>[];
     for (final rule in rules) {
       final pos = firstExactWordIndex(body, rule.word);
@@ -91,7 +145,11 @@ class SmsRuleEngine {
     return false;
   }
 
-  static SmsRuleContext contextFor(String body, SmsNumberSpan span, List<SmsNumberSpan> all) {
+  static SmsRuleContext contextFor(
+    String body,
+    SmsNumberSpan span,
+    List<SmsNumberSpan> all,
+  ) {
     SmsNumberSpan? previous;
     SmsNumberSpan? next;
     for (final item in all) {
@@ -177,7 +235,11 @@ class SmsRuleEngine {
   }
 
   static double? parseAmount(String raw) {
-    var text = normalizeDigits(raw).replaceAll('\u066B', '.').replaceAll('\u066C', ',');
+    var text = normalizeDigits(
+      raw,
+    ).replaceAll('\u066B', '.').replaceAll('\u066C', ',');
+    final embedded = _numberPattern.allMatches(text).toList();
+    if (embedded.length == 1) text = embedded.single.group(0)!;
     final hasComma = text.contains(',');
     final hasDot = text.contains('.');
     if (hasComma && hasDot) {
@@ -188,7 +250,8 @@ class SmsRuleEngine {
       }
     } else if (hasComma) {
       final pieces = text.split(',');
-      final thousands = pieces.length > 1 && pieces.skip(1).every((p) => p.length == 3);
+      final thousands =
+          pieces.length > 1 && pieces.skip(1).every((p) => p.length == 3);
       text = thousands ? text.replaceAll(',', '') : text.replaceAll(',', '.');
     }
     return double.tryParse(text);
@@ -243,23 +306,35 @@ class SmsRuleEngine {
 
   static String _flex(String text) {
     final parts = text.split(RegExp(r'\s+')).where((part) => part.isNotEmpty);
-    return parts.map((part) {
-      if (part == _numberSlot) return _capture;
-      if (part.contains(_numberSlot)) {
-        return part.split(_numberSlot).map(RegExp.escape).join(_capture);
-      }
-      return RegExp.escape(part);
-    }).join(r'\s+');
+    return parts
+        .map((part) {
+          if (part == _numberSlot) return _capture;
+          if (part.contains(_numberSlot)) {
+            return part.split(_numberSlot).map(RegExp.escape).join(_capture);
+          }
+          return RegExp.escape(part);
+        })
+        .join(r'\s+');
   }
 
   static String _lastWords(String text, int max) {
-    final parts = text.trim().split(RegExp(r'\s+')).where((part) => part.isNotEmpty).toList();
+    final parts =
+        text
+            .trim()
+            .split(RegExp(r'\s+'))
+            .where((part) => part.isNotEmpty)
+            .toList();
     if (parts.length <= max) return parts.join(' ');
     return parts.sublist(parts.length - max).join(' ');
   }
 
   static String _firstWords(String text, int max) {
-    final parts = text.trim().split(RegExp(r'\s+')).where((part) => part.isNotEmpty).toList();
+    final parts =
+        text
+            .trim()
+            .split(RegExp(r'\s+'))
+            .where((part) => part.isNotEmpty)
+            .toList();
     if (parts.length <= max) return parts.join(' ');
     return parts.sublist(0, max).join(' ');
   }
@@ -279,9 +354,10 @@ class SmsRuleEngine {
   }
 
   static int _letterCount(String text) {
-    return RegExp(r'\p{L}', unicode: true)
-        .allMatches(text.replaceAll(_numberSlot, ''))
-        .length;
+    return RegExp(
+      r'\p{L}',
+      unicode: true,
+    ).allMatches(text.replaceAll(_numberSlot, '')).length;
   }
 
   static int amountRuleLetterCount(SmsReadRule rule) {
@@ -294,7 +370,9 @@ class SmsRuleEngine {
   }) {
     final amountRules = rules.where((rule) => rule.field == SmsField.amount);
     if (amountRules.isNotEmpty) {
-      return amountRules.map(amountRuleLetterCount).reduce((a, b) => a < b ? a : b);
+      return amountRules
+          .map(amountRuleLetterCount)
+          .reduce((a, b) => a < b ? a : b);
     }
     final buffer = StringBuffer();
     for (final word in typeWords) {
@@ -304,10 +382,9 @@ class SmsRuleEngine {
   }
 
   static bool senderBelongs(String sender, List<String> senders) {
-    return matchBank(
-          sender,
-          [BankConfig(id: 'x', nameEn: 'x', nameAr: 'x', senders: senders)],
-        ) !=
+    return matchBank(sender, [
+          BankConfig(id: 'x', nameEn: 'x', nameAr: 'x', senders: senders),
+        ]) !=
         null;
   }
 
@@ -338,9 +415,10 @@ class SmsRuleEngine {
     }
     final bankHits = hits.where((hit) => hit.senderBelongsToBank).toList();
     final foreign = hits.length - bankHits.length;
-    final bankTotal = senders.any((item) => item.trim().isNotEmpty)
-        ? corpus.where((copy) => senderBelongs(copy.sender, senders)).length
-        : 0;
+    final bankTotal =
+        senders.any((item) => item.trim().isNotEmpty)
+            ? corpus.where((copy) => senderBelongs(copy.sender, senders)).length
+            : 0;
     final letters = fixedLetterCount(rules: rules, typeWords: typeWords);
     final hasSender = senders.any((item) => item.trim().isNotEmpty);
     final reasons = <String>[];

@@ -102,6 +102,22 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
     _loadGoals();
   }
 
+  @override
+  void didUpdateWidget(covariant TotalMoneyPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_sourceAmountsChanged(oldWidget.moneySources, widget.moneySources)) {
+      _loadGoals();
+    }
+  }
+
+  bool _sourceAmountsChanged(Map<String, double> previous, Map<String, double> next) {
+    if (previous.length != next.length) return true;
+    for (final entry in previous.entries) {
+      if (next[entry.key] != entry.value) return true;
+    }
+    return false;
+  }
+
   Future<void> _openSourceHistory(
     BuildContext context,
     String sourceName,
