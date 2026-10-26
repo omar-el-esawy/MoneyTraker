@@ -1,7 +1,7 @@
 {
-  "version": "2.0.2",
-  "build_number": null,
+  "version": "2.0.3",
+  "build_number": 4,
   "force_update": false,
-  "download_url": "https://github.com/omar-el-esawy/MoneyTraker/releases/download/v2.0.2/money_traker-v2.0.2.apk",
-  "changelog": "حساب أهداف الصرف بنفس رقم المصروفات، وتحديث سجل اليوم، واسترجاع النسخة الاحتياطية عند أول فتح."
+  "download_url": "https://github.com/omar-el-esawy/MoneyTraker/releases/download/v2.0.3/money_traker-v2.0.3.apk",
+  "changelog": "التطبيق يقترح التحديث ويثبّته من جواه، ولو التحديث إجباري مش هتقدر تكمل من غيره."
 }
