@@ -16,7 +16,9 @@ import 'package:money_traker/model/total_money_day.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:money_traker/data/transaction_repository.dart';
 import 'package:money_traker/domain/entities/transaction_entity.dart';
+import 'package:money_traker/pages/app_update_prompt.dart';
 import 'package:money_traker/pages/first_launch_restore.dart';
+import 'package:money_traker/services/app_update.dart';
 import 'package:money_traker/services/backup_service.dart';
 import 'package:money_traker/services/notification_service.dart';
 import 'package:money_traker/services/sync_service.dart';
@@ -130,7 +132,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     });
     _allowSmsSync = true;
     unawaited(_syncSms());
-    if (publishBackup) _scheduleTourIfNeeded();
+    final offer = AppUpdateService.takePendingOffer();
+    if (offer != null && mounted) {
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+      await showOptionalUpdateDialog(context, offer);
+    }
+    if (publishBackup && mounted) _scheduleTourIfNeeded();
   }
 
   void _setShowAmounts(bool value) {

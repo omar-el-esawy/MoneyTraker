@@ -35,6 +35,35 @@ class MainActivity : FlutterActivity() {
                         }
                     }
                     "requestPublicBackupAccess" -> requestPublicBackupAccess(result)
+                    "retirePublicBackups" -> background(result) {
+                        PublicBackupStore.retireActive(applicationContext)
+                        null
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, UPDATE_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "canRequestPackageInstalls" -> {
+                        val allowed = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            packageManager.canRequestPackageInstalls()
+                        } else {
+                            true
+                        }
+                        result.success(allowed)
+                    }
+                    "openInstallPermissionSettings" -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            val intent = Intent(
+                                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                            ).apply {
+                                data = Uri.parse("package:$packageName")
+                            }
+                            startActivity(intent)
+                        }
+                        result.success(null)
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -124,6 +153,7 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val CHANNEL = "com.example.money_traker/backup"
+        private const val UPDATE_CHANNEL = "com.example.money_traker/update"
         private const val defaultKeepDays = 10
         private const val backupPermissionRequest = 4107
     }

@@ -46,6 +46,7 @@ Future<bool> settleFirstLaunchRestore(
   final search = await _askToLook(context);
   if (!context.mounted) return false;
   if (search != true) {
+    await backup.retirePublicBackups();
     await backup.markRestorePromptDecided();
     return true;
   }
@@ -119,6 +120,7 @@ Future<bool> _askAndMaybeRestore(BuildContext context, RestorableBackup backup) 
   );
   if (!context.mounted) return false;
   if (restore != true) {
+    await BackupService.instance.retirePublicBackups();
     await BackupService.instance.markRestorePromptDecided();
     return true;
   }
@@ -145,6 +147,7 @@ Future<bool> _askAndMaybeRestore(BuildContext context, RestorableBackup backup) 
           ),
     );
     if (fresh == false) {
+      await BackupService.instance.retirePublicBackups();
       await BackupService.instance.markRestorePromptDecided();
       return true;
     }

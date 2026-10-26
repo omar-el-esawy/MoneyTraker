@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Money Tracker</title>
+    <meta
+      name="description"
+      content="تطبيق بسيط لمتابعة فلوسك، مصروفاتك، وأهدافك. حمّله على أندرويد."
+    />
+    <link rel="icon" href="money.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="top">
+      <a class="brand" href="#top">
+        <img src="money.png" alt="" width="36" height="56" />
+        <span>Money Tracker</span>
+      </a>
+      <nav>
+        <a href="#features">المميزات</a>
+        <a class="nav-download" href="#download">تحميل</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">تطبيق أندرويد لمتابعة الفلوس</p>
+          <h1>فلوسك، مصروفك، وأهدافك في مكان واحد.</h1>
+          <p class="lead">
+            سجّل الدخل والمصروف، تابع كل مصدر فلوس، واعرف أنت ماشي إزاي ناحية
+            هدفك من غير جداول معقدة.
+          </p>
+          <div class="actions">
+            <a
+              id="download-button"
+              class="button"
+              href="https://github.com/omar-el-esawy/MoneyTraker/releases/download/v2.0.2/money_traker-v2.0.2.apk"
+              >تحميل التطبيق</a
+            >
+            <p class="version-line">
+              الإصدار <strong id="version-label">2.0.2</strong>
+            </p>
+          </div>
+          <p id="changelog" class="changelog">
+            حساب أهداف الصرف بنفس رقم المصروفات، وتحديث سجل اليوم، واسترجاع
+            النسخة الاحتياطية عند أول فتح.
+          </p>
+        </div>
+        <div class="hero-art" aria-hidden="true">
+          <img src="money.png" alt="" />
+        </div>
+      </section>
+
+      <section id="features" class="features">
+        <h2>إيه اللي يقدر يعمل؟</h2>
+        <ul>
+          <li>
+            <h3>إجمالي الفلوس</h3>
+            <p>شوف مجموع فلوسك ومصادرها، وسجّل أي زيادة أو نقص في يومها.</p>
+          </li>
+          <li>
+            <h3>سجل يومي</h3>
+            <p>كل يوم يظهر فيه الدخل والمصروف، وتقدر ترجّع أي حركة لليوم الصح.</p>
+          </li>
+          <li>
+            <h3>أهداف</h3>
+            <p>حدّد هدف صرف أو ادخار، وتابع التقدم على نفس فترة الهدف.</p>
+          </li>
+          <li>
+            <h3>ملخص المصروفات</h3>
+            <p>صفحة Insights تجمّع مصروفاتك حسب الفئة عشان الصورة تبقى واضحة.</p>
+          </li>
+          <li>
+            <h3>رسائل البنك</h3>
+            <p>يقدر يقرأ رسائل التحويل ويقترح تسجيل الحركة بدل ما تكتبها بإيدك.</p>
+          </li>
+          <li>
+            <h3>نسخة احتياطية</h3>
+            <p>يحفظ نسخة من بياناتك، وتقدر ترجّعها لو ثبّت التطبيق من جديد.</p>
+          </li>
+        </ul>
+      </section>
+
+      <section id="download" class="download">
+        <h2>حمّله على موبايلك</h2>
+        <p>ملف APK مباشر من GitHub. بعد التحميل افتحه ووافق على التثبيت من هذا المصدر.</p>
+        <a
+          id="download-button-bottom"
+          class="button"
+          href="https://github.com/omar-el-esawy/MoneyTraker/releases/download/v2.0.2/money_traker-v2.0.2.apk"
+          >تحميل APK</a
+        >
+      </section>
+    </main>
+
+    <footer>
+      <span>Money Tracker</span>
+      <a href="https://github.com/omar-el-esawy/MoneyTraker/releases">كل الإصدارات</a>
+    </footer>
+
+    <script>
+      var remoteVersion =
+        "https://raw.githubusercontent.com/omar-el-esawy/MoneyTraker/main/site/version.json";
+
+      function loadVersion(url) {
+        return fetch(url, { cache: "no-store" }).then(function (response) {
+          if (!response.ok) throw new Error("version");
+          return response.json();
+        });
+      }
+
+      loadVersion(remoteVersion)
+        .catch(function () {
+          return loadVersion("version.json");
+        })
+        .then(function (data) {
+          if (!data.download_url) return;
+          document.getElementById("download-button").href = data.download_url;
+          document.getElementById("download-button-bottom").href = data.download_url;
+          if (data.version) {
+            document.getElementById("version-label").textContent = data.version;
+          }
+          if (data.changelog) {
+            document.getElementById("changelog").textContent = data.changelog;
+          }
+        })
+        .catch(function () {});
+    </script>
+  </body>
+</html>

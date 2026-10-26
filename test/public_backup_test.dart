@@ -54,4 +54,16 @@ void main() {
     expect(backupDateLabel(files.first.name), '2026-10-22');
     expect(files.last.name, 'money_traker_2026-10-20.json');
   });
+
+  test('retired copies are not offered as the current backup', () {
+    expect(
+      backupFileName.hasMatch('money_traker_2026-10-22_old_2026-10-26.json'),
+      isFalse,
+    );
+    expect(
+      backupFileName.hasMatch('money_traker_2026-10-22_old_2026-10-26 (1).json'),
+      isFalse,
+    );
+    expect(backupFileName.hasMatch('money_traker_2026-10-22.json'), isTrue);
+  });
 }

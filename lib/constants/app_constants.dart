@@ -23,4 +23,10 @@ class AppConstants {
   static const String fontFamily = 'Inter';
 
   static const String splashImage = 'assets/money.png';
+
+  /// `site/version.json` on main. The release workflow updates this file
+  /// after it publishes an APK, so the app does not wait for a new Vercel upload.
+  /// Empty skips the update check and the app opens normally.
+  static const String versionManifestUrl =
+      'https://raw.githubusercontent.com/omar-el-esawy/MoneyTraker/main/site/version.json';
 }

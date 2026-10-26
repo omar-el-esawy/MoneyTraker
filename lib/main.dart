@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:money_traker/pages/app_update_prompt.dart';
 import 'package:money_traker/pages/splash_screen.dart';
 import 'package:money_traker/pages/home_page.dart';
 import 'package:money_traker/constants/app_constants.dart';
+import 'package:money_traker/services/app_update.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:money_traker/screens/notifications_screen.dart';
 import 'package:money_traker/services/notification_service.dart';
@@ -114,6 +116,7 @@ class SplashToHome extends StatefulWidget {
 
 class _SplashToHomeState extends State<SplashToHome> {
   bool _ready = false;
+  UpdateOffer? _forceOffer;
 
   @override
   void initState() {
@@ -122,19 +125,26 @@ class _SplashToHomeState extends State<SplashToHome> {
   }
 
   Future<void> _prepare() async {
-    // Simulate loading or wait for any async initialization if needed
-    await Future.delayed(const Duration(milliseconds: 1200));
-    if (mounted) {
-      setState(() {
-        _ready = true;
-      });
-    }
+    final results = await Future.wait<Object?>([
+      Future<void>.delayed(const Duration(milliseconds: 1200)),
+      AppUpdateService.check(),
+    ]);
+    if (!mounted) return;
+    final offer = results[1] as UpdateOffer?;
+    setState(() {
+      _forceOffer = offer != null && offer.force ? offer : null;
+      _ready = true;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     if (!_ready) {
       return const SplashScreen();
+    }
+    final force = _forceOffer;
+    if (force != null) {
+      return ForceUpdatePage(offer: force);
     }
     return const HomePage();
   }

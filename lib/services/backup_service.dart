@@ -30,7 +30,7 @@ class BackupService {
   static const phoneFolder = 'Downloads/MoneyTracker';
   static const _lastBackupKey = 'last_auto_backup_at';
   static const _lastPhoneBackupKey = 'last_phone_backup_at';
-  static const restoreDecidedKey = 'public_backup_restore_decided_v1';
+  static const restoreDecidedKey = 'public_backup_restore_decided_v2';
   static const _latestName = 'latest.json';
   static const _phoneChannel = MethodChannel('com.example.money_traker/backup');
 
@@ -247,6 +247,17 @@ class BackupService {
   Future<void> markRestorePromptDecided() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(restoreDecidedKey, true);
+  }
+
+  /// Renames Downloads/MoneyTracker backups to `money_traker_<date>_old_<today>.json`.
+  /// Those copies are deleted after 3 days.
+  Future<void> retirePublicBackups() async {
+    if (!supportsPublicRestore) return;
+    try {
+      await _phoneChannel.invokeMethod<void>('retirePublicBackups');
+    } catch (e, stack) {
+      debugPrint('Retire public backups failed: $e\n$stack');
+    }
   }
 
   /// `granted` when the folder can be read now, `settings` when the system
