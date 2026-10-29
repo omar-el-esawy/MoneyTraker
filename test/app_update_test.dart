@@ -2,6 +2,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:money_traker/services/app_update_logic.dart';
 
 void main() {
+  test('a release label includes the build number when it exists', () {
+    expect(releaseLabel('2.0.3', 4), '2.0.3 (4)');
+    expect(releaseLabel('2.0.3', null), '2.0.3');
+    expect(releaseLabel('2.0.3', 0), '2.0.3');
+  });
+
   test('version names compare numerically', () {
     expect(compareVersionNames('2.0.3', '2.0.2'), greaterThan(0));
     expect(compareVersionNames('2.0.2', '2.0.2'), 0);

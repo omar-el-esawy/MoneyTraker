@@ -1,3 +1,8 @@
+String releaseLabel(String version, int? buildNumber) {
+  if (buildNumber == null || buildNumber < 1) return version;
+  return '$version ($buildNumber)';
+}
+
 /// Positive when [remote] is a newer version name than [local].
 int compareVersionNames(String remote, String local) {
   final a = _versionParts(remote);
@@ -45,7 +50,8 @@ class RemoteRelease {
 /// Returns null when the file has no usable https download link.
 RemoteRelease? parseRemoteRelease(Map<String, dynamic> json) {
   final version = json['version']?.toString().trim() ?? '';
-  final url = (json['download_url'] ?? json['apk_url'] ?? json['apkUrl'])
+  final url =
+      (json['download_url'] ?? json['apk_url'] ?? json['apkUrl'])
           ?.toString()
           .trim() ??
       '';

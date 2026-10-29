@@ -47,28 +47,15 @@ class SmsRuleEngine {
     );
   }
 
-  static String phraseText(Iterable<String> words) {
-    return words.map(normalizeWord).where((word) => word.isNotEmpty).join(' ');
-  }
-
-  static List<String> phraseParts(String word) {
-    return word
-        .trim()
-        .split(RegExp(r'\s+'))
-        .map((part) => normalizeWord(part).toLowerCase())
-        .where((part) => part.isNotEmpty)
-        .toList();
-  }
-
-  /// Longer phrases win, then the earliest phrase in the message.
+  /// Longer text wins, then the earliest match in the message.
   static String detectType(String body, List<SmsTypeWord> words) {
     SmsTypeWord? best;
     var bestPos = 1 << 30;
     var bestLength = 0;
     for (final word in words) {
-      final hit = locateWord(body, word.word);
+      final hit = locateText(body, word.word);
       if (hit == null) continue;
-      final length = phraseParts(word.word).length;
+      final length = word.word.trim().length;
       final better =
           length > bestLength || (length == bestLength && hit.start < bestPos);
       if (!better) continue;
@@ -80,52 +67,35 @@ class SmsRuleEngine {
   }
 
   static int firstIndexOfWord(String body, String word) {
-    return locateWord(body, word)?.start ?? -1;
+    return locateText(body, word)?.start ?? -1;
   }
 
-  /// Finds [word] as one token, or as consecutive tokens when [word] contains spaces.
-  static ({int start, int end})? locateWord(String body, String word) {
-    final parts = phraseParts(word);
-    if (parts.isEmpty) return null;
-    final tokens = tokenize(body);
-    for (var i = 0; i <= tokens.length - parts.length; i++) {
-      var matched = true;
-      for (var j = 0; j < parts.length; j++) {
-        final token = normalizeWord(tokens[i + j].text).toLowerCase();
-        final same =
-            parts.length == 1
-                ? _sameTypeWord(token, parts[j])
-                : token == parts[j];
-        if (!same) {
-          matched = false;
-          break;
-        }
-      }
-      if (!matched) continue;
-      return (start: tokens[i].start, end: tokens[i + parts.length - 1].end);
-    }
-    return null;
+  /// Finds [text] anywhere in [body]. Capital letters do not matter.
+  static ({int start, int end})? locateText(String body, String text) {
+    final query = text.trim();
+    if (query.isEmpty) return null;
+    final match = RegExp(
+      RegExp.escape(query),
+      caseSensitive: false,
+    ).firstMatch(body);
+    if (match == null) return null;
+    return (start: match.start, end: match.end);
   }
 
   static int firstExactWordIndex(String body, String word) {
-    final target = normalizeWord(word).toLowerCase();
-    if (target.isEmpty) return -1;
-    for (final token in tokenize(body)) {
-      if (normalizeWord(token.text).toLowerCase() == target) return token.start;
-    }
-    return -1;
+    return firstIndexOfWord(body, word);
   }
 
-  /// Longer words win, then the earliest word in the message.
+  /// Longer text wins, then the earliest match in the message.
   static List<SmsCategoryRule> rankCategoryRules(
     String body,
     List<SmsCategoryRule> rules,
   ) {
     final hits = <({SmsCategoryRule rule, int pos, int length})>[];
     for (final rule in rules) {
-      final pos = firstExactWordIndex(body, rule.word);
-      if (pos < 0) continue;
-      hits.add((rule: rule, pos: pos, length: normalizeWord(rule.word).length));
+      final hit = locateText(body, rule.word);
+      if (hit == null) continue;
+      hits.add((rule: rule, pos: hit.start, length: rule.word.trim().length));
     }
     hits.sort((a, b) {
       final byLength = b.length.compareTo(a.length);
@@ -133,16 +103,6 @@ class SmsRuleEngine {
       return a.pos.compareTo(b.pos);
     });
     return [for (final hit in hits) hit.rule];
-  }
-
-  static bool _sameTypeWord(String token, String target) {
-    if (token.isEmpty || target.isEmpty) return false;
-    if (token == target) return true;
-    // credited/credit, debited/debit
-    if (token.length >= 4 && target.length >= 4) {
-      return token.startsWith(target) || target.startsWith(token);
-    }
-    return false;
   }
 
   static SmsRuleContext contextFor(
@@ -318,28 +278,24 @@ class SmsRuleEngine {
   }
 
   static String _lastWords(String text, int max) {
-    final parts =
-        text
-            .trim()
-            .split(RegExp(r'\s+'))
-            .where((part) => part.isNotEmpty)
-            .toList();
+    final parts = text
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .toList();
     if (parts.length <= max) return parts.join(' ');
     return parts.sublist(parts.length - max).join(' ');
   }
 
   static String _firstWords(String text, int max) {
-    final parts =
-        text
-            .trim()
-            .split(RegExp(r'\s+'))
-            .where((part) => part.isNotEmpty)
-            .toList();
+    final parts = text
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .toList();
     if (parts.length <= max) return parts.join(' ');
     return parts.sublist(0, max).join(' ');
   }
-
-  static const minFixedLetters = 3;
 
   static String ruleSetId({
     required List<SmsReadRule> rules,
@@ -415,23 +371,11 @@ class SmsRuleEngine {
     }
     final bankHits = hits.where((hit) => hit.senderBelongsToBank).toList();
     final foreign = hits.length - bankHits.length;
-    final bankTotal =
-        senders.any((item) => item.trim().isNotEmpty)
-            ? corpus.where((copy) => senderBelongs(copy.sender, senders)).length
-            : 0;
+    final bankTotal = senders.any((item) => item.trim().isNotEmpty)
+        ? corpus.where((copy) => senderBelongs(copy.sender, senders)).length
+        : 0;
     final letters = fixedLetterCount(rules: rules, typeWords: typeWords);
     final hasSender = senders.any((item) => item.trim().isNotEmpty);
-    final reasons = <String>[];
-    if (!hasSender) reasons.add('sender');
-    if (letters < minFixedLetters) reasons.add('fixedText');
-    if (foreign >= 2) reasons.add('foreign');
-    final allRatio = corpus.isEmpty ? 0.0 : hits.length / corpus.length;
-    final bankRatio = bankTotal == 0 ? 0.0 : bankHits.length / bankTotal;
-    if (corpus.length >= 8 && allRatio >= 0.7 && (foreign > 0 || letters < 8)) {
-      reasons.add('ratio');
-    } else if (bankTotal >= 8 && bankRatio >= 0.85 && letters < 8) {
-      reasons.add('ratio');
-    }
     return SmsRuleTestReport(
       total: hasSender ? bankTotal : corpus.length,
       matched: bankHits.length,
@@ -439,8 +383,8 @@ class SmsRuleEngine {
       foreignMatches: foreign,
       hasSender: hasSender,
       fixedLetterCount: letters,
-      tooGeneric: reasons.isNotEmpty,
-      reasons: reasons,
+      tooGeneric: false,
+      reasons: const [],
       hits: hits,
     );
   }

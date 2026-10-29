@@ -13,6 +13,27 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:money_traker/constants/app_constants.dart';
 import 'package:money_traker/services/app_update_logic.dart';
 
+class VersionCheck {
+  final String currentVersion;
+  final int currentBuild;
+  final String latestVersion;
+  final int? latestBuild;
+  final bool newer;
+  final UpdateOffer? offer;
+
+  const VersionCheck({
+    required this.currentVersion,
+    required this.currentBuild,
+    required this.latestVersion,
+    required this.latestBuild,
+    required this.newer,
+    required this.offer,
+  });
+
+  String get currentLabel => releaseLabel(currentVersion, currentBuild);
+  String get latestLabel => releaseLabel(latestVersion, latestBuild);
+}
+
 class UpdateOffer {
   final String version;
   final int? buildNumber;
@@ -52,53 +73,75 @@ class AppUpdateService {
   /// Never throws. No network, a bad file, or a timeout leaves the app usable.
   /// Returns a forced offer when the home screen must stay hidden.
   static Future<UpdateOffer?> check() async {
+    if (!Platform.isAndroid) return null;
+    final result = await checkLatest();
+    return result?.offer;
+  }
+
+  /// Fetches the published version. [refresh] skips the saved copy.
+  /// Returns null when the version file cannot be read.
+  static Future<VersionCheck?> checkLatest({bool refresh = false}) async {
     try {
-      return await _check().timeout(const Duration(seconds: 10));
+      return await _checkLatest(
+        refresh: refresh,
+      ).timeout(const Duration(seconds: 10));
     } catch (e, stack) {
       debugPrint('App update check failed: $e\n$stack');
       return null;
     }
   }
 
-  static Future<UpdateOffer?> _check() async {
-    if (!Platform.isAndroid) return null;
+  static Future<VersionCheck?> _checkLatest({required bool refresh}) async {
     final url = AppConstants.versionManifestUrl.trim();
     if (url.isEmpty) {
       debugPrint('App update check skipped: versionManifestUrl is empty.');
       return null;
     }
 
-    final release = await _loadRelease(url);
+    final release = await _loadRelease(url, refresh: refresh);
     if (release == null) return null;
 
     final info = await PackageInfo.fromPlatform();
     final localBuild = int.tryParse(info.buildNumber) ?? 0;
-    if (!isRemoteNewer(
+    final newer = isRemoteNewer(
       localVersion: info.version,
       localBuild: localBuild,
       remoteVersion: release.version,
       remoteBuild: release.buildNumber,
-    )) {
-      return null;
-    }
-
-    final offer = UpdateOffer(
-      version: release.version,
-      buildNumber: release.buildNumber,
-      force: release.forceUpdate,
-      downloadUrl: release.downloadUrl,
-      changelog: release.changelog,
     );
-    if (!offer.force) _pending = offer;
-    return offer;
+    UpdateOffer? offer;
+    if (newer && Platform.isAndroid) {
+      offer = UpdateOffer(
+        version: release.version,
+        buildNumber: release.buildNumber,
+        force: release.forceUpdate,
+        downloadUrl: release.downloadUrl,
+        changelog: release.changelog,
+      );
+      if (!offer.force && !refresh) _pending = offer;
+    }
+    return VersionCheck(
+      currentVersion: info.version,
+      currentBuild: localBuild,
+      latestVersion: release.version,
+      latestBuild: release.buildNumber,
+      newer: newer,
+      offer: offer,
+    );
   }
 
-  static Future<RemoteRelease?> _loadRelease(String url) async {
+  static Future<RemoteRelease?> _loadRelease(
+    String url, {
+    bool refresh = false,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     final cachedBody = prefs.getString(_manifestKey);
     final fetchedAt = prefs.getInt(_fetchedAtKey) ?? 0;
     final age = DateTime.now().millisecondsSinceEpoch - fetchedAt;
-    if (cachedBody != null && age >= 0 && age < cacheFor.inMilliseconds) {
+    if (!refresh &&
+        cachedBody != null &&
+        age >= 0 &&
+        age < cacheFor.inMilliseconds) {
       final cached = _decode(cachedBody);
       if (cached != null) return cached;
     }
@@ -113,10 +156,7 @@ class AppUpdateService {
       final parsed = _decode(response.body);
       if (parsed == null) throw const FormatException('version.json');
       await prefs.setString(_manifestKey, response.body);
-      await prefs.setInt(
-        _fetchedAtKey,
-        DateTime.now().millisecondsSinceEpoch,
-      );
+      await prefs.setInt(_fetchedAtKey, DateTime.now().millisecondsSinceEpoch);
       return parsed;
     } catch (e) {
       debugPrint('App update request failed: $e');

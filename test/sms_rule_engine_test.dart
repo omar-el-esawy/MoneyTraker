@@ -235,7 +235,7 @@ void main() {
     expect(reading.isComplete, isTrue);
   });
 
-  test('a bare amount template is rejected as too generic', () {
+  test('a bare amount template is not blocked', () {
     final rules = [
       SmsReadRule(
         bankId: 'cib',
@@ -255,8 +255,8 @@ void main() {
       typeWords: const [],
       senders: const ['CIB'],
     );
-    expect(report.tooGeneric, isTrue);
-    expect(report.reasons, contains('fixedText'));
+    expect(report.tooGeneric, isFalse);
+    expect(report.reasons, isEmpty);
   });
 
   test(
@@ -302,7 +302,7 @@ void main() {
   );
 
   test(
-    'a generic amount rule is rejected even if a specific rule already exists',
+    'a short amount rule is not blocked when a specific rule also exists',
     () {
       const sample = 'تم خصم 150 جنيه من حسابك';
       final numbers = SmsRuleEngine.findNumbers(sample);
@@ -339,8 +339,8 @@ void main() {
         ],
         senders: const ['CIB'],
       );
-      expect(report.tooGeneric, isTrue);
-      expect(report.reasons, contains('fixedText'));
+      expect(report.tooGeneric, isFalse);
+      expect(report.reasons, isEmpty);
       expect(report.matched, 1);
       expect(report.total, 1);
     },
@@ -396,7 +396,94 @@ void main() {
     );
   });
 
-  test('two neighboring words decide debit or credit', () {
+  test(
+    'selected text sets debit, credit, or a category when it appears again',
+    () {
+      expect(
+        SmsRuleEngine.detectType('IPN outward transfer for EGP 50', [
+          SmsTypeWord(
+            bankId: 'hsbc',
+            word: 'IPN out',
+            typeHint: 'debit',
+            createdAt: DateTime(2026),
+          ),
+        ]),
+        'debit',
+      );
+      expect(
+        SmsRuleEngine.detectType('Salary to account 001', [
+          SmsTypeWord(
+            bankId: 'hsbc',
+            word: 'Salary',
+            typeHint: 'credit',
+            createdAt: DateTime(2026),
+          ),
+        ]),
+        'credit',
+      );
+      expect(
+        SmsRuleEngine.detectType('IPN outward transfer', [
+          SmsTypeWord(
+            bankId: 'hsbc',
+            word: 'IPN',
+            typeHint: 'credit',
+            createdAt: DateTime(2026),
+          ),
+          SmsTypeWord(
+            bankId: 'hsbc',
+            word: 'IPN outward',
+            typeHint: 'debit',
+            createdAt: DateTime(2026),
+          ),
+        ]),
+        'debit',
+      );
+      expect(
+        SmsRuleEngine.rankCategoryRules('card SEOUDI SILVER STAR 9001', [
+          SmsCategoryRule(
+            bankId: 'cib',
+            word: 'SILVER',
+            tagId: 1,
+            createdAt: DateTime(2026),
+          ),
+          SmsCategoryRule(
+            bankId: 'cib',
+            word: 'SILVER STAR',
+            tagId: 2,
+            createdAt: DateTime(2026),
+          ),
+        ]).first.tagId,
+        2,
+      );
+    },
+  );
+
+  test('a match from another sender does not block the rule', () {
+    final report = SmsRuleEngine.test(
+      corpus: [
+        _copy(sender: 'HSBC', body: 'Salary EGP 100'),
+        _copy(sender: 'CIB', body: 'Cashback EGP 90'),
+        _copy(sender: 'CIB', body: 'Refund EGP 40'),
+      ],
+      rules: [
+        SmsReadRule(
+          bankId: 'hsbc',
+          field: SmsField.amount,
+          prefix: 'EGP',
+          suffix: '',
+          typeHint: 'credit',
+          createdAt: DateTime(2026),
+        ),
+      ],
+      typeWords: const [],
+      senders: const ['HSBC'],
+    );
+    expect(report.matched, 1);
+    expect(report.foreignMatches, 2);
+    expect(report.tooGeneric, isFalse);
+  });
+
+  test('saved text is matched again even when it is more than one word', () {
     final typeWords = [
       SmsTypeWord(
         bankId: 'cib',

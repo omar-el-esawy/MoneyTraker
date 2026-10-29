@@ -63,25 +63,41 @@ class _RuleTesterPageState extends State<RuleTesterPage> {
     final existingRules = (await DatabaseHelper.instance.getSmsRules())
         .where((rule) => rule.bankId == widget.bankId)
         .toList();
-    final existingWords = await DatabaseHelper.instance.getSmsTypeWords(bankId: widget.bankId);
+    final existingWords = await DatabaseHelper.instance.getSmsTypeWords(
+      bankId: widget.bankId,
+    );
     final deleteKeys = {
-      for (final word in widget.wordsToDelete) '${word.word.toLowerCase()}|${word.typeHint}',
+      for (final word in widget.wordsToDelete)
+        '${word.word.toLowerCase()}|${word.typeHint}',
     };
     final words = <SmsTypeWord>[
-      ...existingWords.where((word) => !deleteKeys.contains('${word.word.toLowerCase()}|${word.typeHint}')),
+      ...existingWords.where(
+        (word) =>
+            !deleteKeys.contains('${word.word.toLowerCase()}|${word.typeHint}'),
+      ),
       ...widget.draftTypeWords,
     ];
     final rules = [...existingRules, ...widget.draftRules];
-    final deleteCategoryIds = {for (final rule in widget.categoryRulesToDelete) rule.id};
-    final draftWords = {for (final rule in widget.draftCategoryRules) rule.word.toLowerCase()};
-    final existingCategories = await DatabaseHelper.instance.getSmsCategoryRules(bankId: widget.bankId);
+    final deleteCategoryIds = {
+      for (final rule in widget.categoryRulesToDelete) rule.id,
+    };
+    final draftWords = {
+      for (final rule in widget.draftCategoryRules) rule.word.toLowerCase(),
+    };
+    final existingCategories = await DatabaseHelper.instance
+        .getSmsCategoryRules(bankId: widget.bankId);
     final categoryRules = [
-      ...existingCategories.where((rule) =>
-          !deleteCategoryIds.contains(rule.id) && !draftWords.contains(rule.word.toLowerCase())),
+      ...existingCategories.where(
+        (rule) =>
+            !deleteCategoryIds.contains(rule.id) &&
+            !draftWords.contains(rule.word.toLowerCase()),
+      ),
       ...widget.draftCategoryRules,
     ];
     final tags = await MoneyStorage().getTags();
-    final corpus = await DatabaseHelper.instance.getRawSms();
+    final corpus = await DatabaseHelper.instance.getRawSms(
+      bankId: widget.bankId,
+    );
     final report = SmsRuleEngine.test(
       corpus: corpus,
       rules: rules,
@@ -103,14 +119,18 @@ class _RuleTesterPageState extends State<RuleTesterPage> {
       _tags = tags;
       _focusReading = widget.focusCopy == null
           ? null
-          : SmsRuleEngine.parse(widget.focusCopy!.body, rules, typeWords: words);
+          : SmsRuleEngine.parse(
+              widget.focusCopy!.body,
+              rules,
+              typeWords: words,
+            );
       _loading = false;
     });
   }
 
   Future<void> _activate() async {
     final report = _report;
-    if (report == null || report.tooGeneric) return;
+    if (report == null) return;
     setState(() => _saving = true);
     try {
       final db = DatabaseHelper.instance;
@@ -131,7 +151,8 @@ class _RuleTesterPageState extends State<RuleTesterPage> {
       for (final rule in widget.draftCategoryRules) {
         await db.insertSmsCategoryRule(rule);
       }
-      final changing = widget.draftRules.isNotEmpty ||
+      final changing =
+          widget.draftRules.isNotEmpty ||
           widget.draftTypeWords.isNotEmpty ||
           widget.wordsToDelete.isNotEmpty;
       if (changing) {
@@ -144,7 +165,9 @@ class _RuleTesterPageState extends State<RuleTesterPage> {
       Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.toString())));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -182,9 +205,10 @@ class _RuleTesterPageState extends State<RuleTesterPage> {
     final focus = widget.focusCopy;
     final others = report == null
         ? const <SmsRuleTestHit>[]
-        : report.sampleHits
-            .where((hit) => focus == null || hit.smsId != focus.smsId)
-            .toList();
+        : report.hits
+              .where((hit) => hit.senderBelongsToBank)
+              .where((hit) => focus == null || hit.smsId != focus.smsId)
+              .toList();
     return Directionality(
       textDirection: s.ar ? TextDirection.rtl : TextDirection.ltr,
       child: Scaffold(
@@ -194,9 +218,15 @@ class _RuleTesterPageState extends State<RuleTesterPage> {
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: FilledButton(
-              onPressed: _saving || _loading || report == null || report.tooGeneric ? null : _activate,
+              onPressed: _saving || _loading || report == null
+                  ? null
+                  : _activate,
               child: _saving
-                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
                   : Text(s.activateRule),
             ),
           ),
@@ -206,16 +236,24 @@ class _RuleTesterPageState extends State<RuleTesterPage> {
             : ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  Text(s.ruleTesterHint, style: const TextStyle(color: AppConstants.textSecondary)),
+                  Text(
+                    s.ruleTesterHint,
+                    style: const TextStyle(color: AppConstants.textSecondary),
+                  ),
                   if (focus != null && _focusReading != null) ...[
                     const SizedBox(height: 16),
-                    Text(s.thisMessage, style: Theme.of(context).textTheme.titleMedium),
+                    Text(
+                      s.thisMessage,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
                     const SizedBox(height: 8),
                     _OutcomeCard(
                       reading: _focusReading!,
                       body: focus.body,
                       sender: focus.sender,
-                      outcome: _focusReading!.isComplete ? _outcome(_focusReading!, focus.date, focus.body) : s.incompleteReading(_focusReading!),
+                      outcome: _focusReading!.isComplete
+                          ? _outcome(_focusReading!, focus.date, focus.body)
+                          : s.incompleteReading(_focusReading!),
                     ),
                   ],
                   const SizedBox(height: 16),
@@ -223,28 +261,23 @@ class _RuleTesterPageState extends State<RuleTesterPage> {
                     s.matchedLine(report.matched, report.total),
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
-                  if (report.foreignMatches > 0)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text('${s.foreignMatches}: ${report.foreignMatches}'),
-                    ),
-                  if (report.tooGeneric) ...[
-                    const SizedBox(height: 12),
-                    Text(s.cannotActivate, style: const TextStyle(color: Colors.red, fontWeight: FontWeight.w700)),
-                    for (final reason in report.reasons)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 6),
-                        child: Text(s.genericReason(reason)),
-                      ),
-                  ],
                   const SizedBox(height: 16),
-                  Text(s.otherMessages, style: Theme.of(context).textTheme.titleMedium),
-                  if (others.isEmpty && (focus == null || _focusReading?.isComplete != true))
+                  Text(
+                    s.otherMessages,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  if (others.isEmpty &&
+                      (focus == null || _focusReading?.isComplete != true))
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
-                      child: Text(s.noHits, style: const TextStyle(color: AppConstants.textSecondary)),
+                      child: Text(
+                        s.noHits,
+                        style: const TextStyle(
+                          color: AppConstants.textSecondary,
+                        ),
+                      ),
                     ),
-                  for (final hit in others.take(20))
+                  for (final hit in others)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
                       child: _OutcomeCard(
@@ -284,8 +317,8 @@ class _OutcomeCard extends StatelessWidget {
     final color = !complete
         ? AppConstants.textSecondary
         : debit
-            ? AppConstants.errorColor
-            : AppConstants.primaryColor;
+        ? AppConstants.errorColor
+        : AppConstants.primaryColor;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -295,13 +328,19 @@ class _OutcomeCard extends StatelessWidget {
             Text(
               outcome,
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: color,
-                    fontWeight: FontWeight.w700,
-                    fontSize: compact ? 16 : 18,
-                  ),
+                color: color,
+                fontWeight: FontWeight.w700,
+                fontSize: compact ? 16 : 18,
+              ),
             ),
             const SizedBox(height: 8),
-            Text(sender, style: const TextStyle(color: AppConstants.textSecondary, fontWeight: FontWeight.w600)),
+            Text(
+              sender,
+              style: const TextStyle(
+                color: AppConstants.textSecondary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
             const SizedBox(height: 4),
             Text(body, style: const TextStyle(color: AppConstants.textPrimary)),
           ],

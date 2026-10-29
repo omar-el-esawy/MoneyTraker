@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'package:money_traker/constants/app_constants.dart';
 import 'package:money_traker/services/app_update.dart';
+import 'package:money_traker/services/app_update_logic.dart';
 
 class ForceUpdatePage extends StatelessWidget {
   final UpdateOffer offer;
@@ -20,17 +21,12 @@ class ForceUpdatePage extends StatelessWidget {
   }
 }
 
-Future<void> showOptionalUpdateDialog(
-  BuildContext context,
-  UpdateOffer offer,
-) {
+Future<void> showOptionalUpdateDialog(BuildContext context, UpdateOffer offer) {
   return showDialog<void>(
     context: context,
     barrierDismissible: true,
     builder: (context) {
-      return Dialog(
-        child: UpdatePrompt(offer: offer, blocking: false),
-      );
+      return Dialog(child: UpdatePrompt(offer: offer, blocking: false));
     },
   );
 }
@@ -39,11 +35,7 @@ class UpdatePrompt extends StatefulWidget {
   final UpdateOffer offer;
   final bool blocking;
 
-  const UpdatePrompt({
-    super.key,
-    required this.offer,
-    required this.blocking,
-  });
+  const UpdatePrompt({super.key, required this.offer, required this.blocking});
 
   @override
   State<UpdatePrompt> createState() => _UpdatePromptState();
@@ -57,8 +49,7 @@ class _UpdatePromptState extends State<UpdatePrompt>
   String? _error;
   File? _apk;
 
-  bool get _arabic =>
-      Localizations.localeOf(context).languageCode == 'ar';
+  bool get _arabic => Localizations.localeOf(context).languageCode == 'ar';
 
   @override
   void initState() {
@@ -101,12 +92,13 @@ class _UpdatePromptState extends State<UpdatePrompt>
       _progress = 0;
     });
     try {
-      final file = await AppUpdateService.downloadApk(widget.offer.downloadUrl, (
-        progress,
-      ) {
-        if (!mounted) return;
-        setState(() => _progress = progress);
-      });
+      final file = await AppUpdateService.downloadApk(
+        widget.offer.downloadUrl,
+        (progress) {
+          if (!mounted) return;
+          setState(() => _progress = progress);
+        },
+      );
       if (!mounted) return;
       setState(() => _apk = file);
       await _openDownloaded(file);
@@ -157,13 +149,12 @@ class _UpdatePromptState extends State<UpdatePrompt>
     final title = widget.blocking
         ? (arabic ? 'لازم تحدّث التطبيق' : 'Update required')
         : (arabic ? 'في تحديث جديد' : 'Update available');
+    final latest = releaseLabel(widget.offer.version, widget.offer.buildNumber);
     final body = widget.blocking
         ? (arabic
-              ? 'النسخة دي مش هتكمل من غير تحديث ${widget.offer.version}.'
-              : 'This version cannot continue without update ${widget.offer.version}.')
-        : (arabic
-              ? 'الإصدار ${widget.offer.version} جاهز للتحميل.'
-              : 'Version ${widget.offer.version} is ready to download.');
+              ? 'النسخة دي مش هتكمل من غير تحديث $latest.'
+              : 'This version cannot continue without update $latest.')
+        : (arabic ? 'آخر إصدار هو $latest.' : 'The latest is $latest.');
 
     final details = Column(
       mainAxisSize: MainAxisSize.min,
@@ -246,7 +237,9 @@ class _UpdatePromptState extends State<UpdatePrompt>
                 child: Text(
                   _busy
                       ? (arabic ? 'جارٍ التحميل…' : 'Downloading…')
-                      : (arabic ? 'تحميل التحديث' : 'Download update'),
+                      : widget.blocking
+                      ? (arabic ? 'تحميل التحديث' : 'Download update')
+                      : (arabic ? 'تحديث' : 'Update'),
                 ),
               ),
             ),
@@ -262,9 +255,7 @@ class _UpdatePromptState extends State<UpdatePrompt>
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Expanded(
-                  child: Center(
-                    child: SingleChildScrollView(child: details),
-                  ),
+                  child: Center(child: SingleChildScrollView(child: details)),
                 ),
                 actions,
               ],
@@ -286,10 +277,7 @@ class _UpdatePromptState extends State<UpdatePrompt>
     return Scaffold(
       backgroundColor: AppConstants.backgroundColor,
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: directed,
-        ),
+        child: Padding(padding: const EdgeInsets.all(24), child: directed),
       ),
     );
   }
