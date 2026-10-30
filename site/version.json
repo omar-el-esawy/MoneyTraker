@@ -1,7 +1,7 @@
 {
-  "version": "2.0.4",
-  "build_number": 5,
+  "version": "2.0.5",
+  "build_number": 6,
   "force_update": false,
-  "download_url": "https://github.com/omar-el-esawy/MoneyTraker/releases/download/v2.0.4/money_traker-v2.0.4.apk",
-  "changelog": "تقدر تختار أي نص في رسالة البنك عشان يتسجل خصم أو إيداع أو تصنيف. صفحة الإعدادات تعرض إصدار التطبيق وفيها فحص للتحديث."
+  "download_url": "https://github.com/omar-el-esawy/MoneyTraker/releases/download/v2.0.5/money_traker-v2.0.5.apk",
+  "changelog": "جرس الإشعارات يعرض عدد الإشعارات اللي لسه متفتحتش، وبيتصفر لما تفتح القائمة. تحويل البنك الجديد يظهر هناك، ولو مفيش قاعدة تصنيف تقدر تختار من ٣ تصنيفات. التحديث الجديد كمان يظهر في نفس القائمة."
 }
