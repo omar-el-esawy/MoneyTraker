@@ -15,11 +15,12 @@ import 'package:money_traker/model/tag.dart';
 import 'package:money_traker/model/total_money_day.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:money_traker/data/transaction_repository.dart';
-import 'package:money_traker/domain/entities/transaction_entity.dart';
 import 'package:money_traker/pages/app_update_prompt.dart';
 import 'package:money_traker/pages/first_launch_restore.dart';
+import 'package:money_traker/pages/widgets/notification_bell.dart';
 import 'package:money_traker/services/app_update.dart';
 import 'package:money_traker/services/backup_service.dart';
+import 'package:money_traker/services/inbox_store.dart';
 import 'package:money_traker/services/notification_service.dart';
 import 'package:money_traker/services/sync_service.dart';
 import 'package:money_traker/tour/app_tour.dart';
@@ -50,7 +51,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _showAmounts = true;
 
   bool _isSmsSyncing = false;
-  List<TransactionEntity> _smsTransactions = [];
 
   Mission? _mission;
 
@@ -61,12 +61,19 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _tourCheckStarted = false;
   bool _allowSmsSync = false;
   Completer<void>? _backupAccessResume;
+  int _insightsRevision = 0;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    InboxStore.instance.addListener(_onInboxChanged);
+    unawaited(InboxStore.instance.ensureLoaded());
     _initData();
+  }
+
+  void _onInboxChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -81,6 +88,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    InboxStore.instance.removeListener(_onInboxChanged);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -132,6 +140,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     });
     _allowSmsSync = true;
     unawaited(_syncSms());
+    final checked = AppUpdateService.lastSuccessfulCheck;
+    if (checked != null) {
+      await InboxStore.instance.syncUpdateOffer(checked.offer);
+    }
     final offer = AppUpdateService.takePendingOffer();
     if (offer != null && mounted) {
       await WidgetsBinding.instance.endOfFrame;
@@ -244,8 +256,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       // Determine a sensible base total for the new day. Prefer the previous day's
       // total if available, otherwise fall back to the current total across sources.
       double baseTotal;
-      final previousDays =
-          _historyDays.where((d) => d.date.isBefore(dateOnly)).toList();
+      final previousDays = _historyDays
+          .where((d) => d.date.isBefore(dateOnly))
+          .toList();
       if (previousDays.isNotEmpty) {
         previousDays.sort((a, b) => a.date.compareTo(b.date));
         baseTotal = previousDays.last.totalAmount;
@@ -364,10 +377,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           resultingAmount: newAmount,
           createdAt: effectiveDate ?? DateTime.now(),
           type: MoneySourceChangeType.edited,
-          note:
-              oldSource.name == newName
-                  ? null
-                  : 'Renamed from ${oldSource.name}',
+          note: oldSource.name == newName
+              ? null
+              : 'Renamed from ${oldSource.name}',
         ),
       );
       final delta = newAmount - oldSource.amount;
@@ -399,10 +411,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     if (_historyDays.isNotEmpty) {
       final lastDay = _historyDays.last.date;
-      final daysGap =
-          today
-              .difference(DateTime(lastDay.year, lastDay.month, lastDay.day))
-              .inDays;
+      final daysGap = today
+          .difference(DateTime(lastDay.year, lastDay.month, lastDay.day))
+          .inDays;
 
       // If there is a gap, fill it with the last known amount
       if (daysGap > 1) {
@@ -509,10 +520,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         deltaAmount: delta,
         resultingAmount: updated.amount,
         createdAt: effectiveDate ?? DateTime.now(),
-        type:
-            delta >= 0
-                ? MoneySourceChangeType.add
-                : MoneySourceChangeType.subtract,
+        type: delta >= 0
+            ? MoneySourceChangeType.add
+            : MoneySourceChangeType.subtract,
       ),
     );
     int? targetDayId;
@@ -604,31 +614,40 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     await _addOrUpdateTodayHistory();
   }
 
+  Future<void> _openNotifications() async {
+    await Navigator.of(context).pushNamed('/notifications');
+    if (!mounted) return;
+    setState(() => _insightsRevision++);
+    await _reloadHistoryDaysOnly();
+  }
+
   Future<void> _syncSms() async {
     if (_isSmsSyncing) return;
     if (!mounted) return;
     setState(() => _isSmsSyncing = true);
 
     try {
-      final before = _smsTransactions.length;
+      final before = await TransactionRepository.instance.getAll();
       await SyncService.instance.sync();
       final updated = await TransactionRepository.instance.getAll();
-      final newCount = updated.length - before;
+      final fresh = await InboxStore.instance.recordBankArrivals(
+        updated,
+        baselineIds: {for (final transaction in before) if (transaction.id != null) transaction.id!},
+      );
       final sources = await _storage.getMoneySources();
       final history = await _storage.getTotalMoneyDays();
 
       if (!mounted) return;
       setState(() {
-        _smsTransactions = updated;
         _sources = sources;
         _historyDays = history;
         _isSmsSyncing = false;
       });
 
-      if (newCount > 0) {
+      if (fresh.isNotEmpty) {
         await NotificationService.instance.sendSyncNotification(
-          newCount: newCount,
-          newTransactions: updated.take(newCount).toList(),
+          newCount: fresh.length,
+          newTransactions: fresh,
         );
       }
     } catch (_) {
@@ -713,14 +732,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               categoryAmount: categoryAmount,
               effectiveDate: effectiveDate,
             ),
-        onTransfer:
-            (from, to, amount) =>
-                _transferBetweenSources(from: from, to: to, amount: amount),
+        onTransfer: (from, to, amount) =>
+            _transferBetweenSources(from: from, to: to, amount: amount),
         mission: _mission,
         onAddMission: _addMission,
       ),
       HistoryPage(historyDays: _historyDays, showAmounts: _showAmounts),
-      InsightsPage(showAmounts: _showAmounts),
+      InsightsPage(showAmounts: _showAmounts, dataRevision: _insightsRevision),
       SettingsPage(onDataImported: _reloadAllData, onReplayTour: _startTour),
     ];
 
@@ -729,7 +747,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       child: Stack(
         children: [
           Scaffold(
-            body: SafeArea(child: pages[_selectedIndex]),
+            body: SafeArea(
+              child: Column(
+                children: [
+                  Align(
+                    alignment: AlignmentDirectional.centerEnd,
+                    child: NotificationBell(
+                      unreadCount: InboxStore.instance.unreadCount,
+                      onPressed: _openNotifications,
+                    ),
+                  ),
+                  Expanded(child: pages[_selectedIndex]),
+                ],
+              ),
+            ),
             bottomNavigationBar: SafeArea(
               minimum: const EdgeInsets.fromLTRB(12, 0, 12, 10),
               child: Container(
@@ -754,21 +785,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         final selected = states.contains(WidgetState.selected);
                         return TextStyle(
                           fontSize: 12,
-                          fontWeight:
-                              selected ? FontWeight.w700 : FontWeight.w500,
-                          color:
-                              selected
-                                  ? AppConstants.primaryColor
-                                  : AppConstants.textTertiary,
+                          fontWeight: selected
+                              ? FontWeight.w700
+                              : FontWeight.w500,
+                          color: selected
+                              ? AppConstants.primaryColor
+                              : AppConstants.textTertiary,
                         );
                       }),
                       iconTheme: WidgetStateProperty.resolveWith((states) {
                         final selected = states.contains(WidgetState.selected);
                         return IconThemeData(
-                          color:
-                              selected
-                                  ? AppConstants.primaryColor
-                                  : AppConstants.textTertiary,
+                          color: selected
+                              ? AppConstants.primaryColor
+                              : AppConstants.textTertiary,
                           size: selected ? 22 : 20,
                         );
                       }),

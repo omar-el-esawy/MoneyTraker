@@ -283,6 +283,35 @@ class DatabaseHelper {
     );
   }
 
+  Future<TransactionEntity?> getTransactionById(int id) async {
+    final db = await database;
+    final rows = await db.query(
+      'transactions',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return TransactionEntity.fromMap(rows.first);
+  }
+
+  Future<Map<int, int>> transactionCategoryCounts() async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT category_tag_id AS tagId, COUNT(*) AS uses
+      FROM transactions
+      WHERE category_tag_id IS NOT NULL
+      GROUP BY category_tag_id
+    ''');
+    final counts = <int, int>{};
+    for (final row in rows) {
+      final tagId = (row['tagId'] as num?)?.toInt();
+      if (tagId == null) continue;
+      counts[tagId] = (row['uses'] as num?)?.toInt() ?? 0;
+    }
+    return counts;
+  }
+
   Future<TransactionEntity?> getTransactionBySmsId(String smsId) async {
     final db = await database;
     final rows = await db.query(

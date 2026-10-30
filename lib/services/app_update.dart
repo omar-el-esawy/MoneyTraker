@@ -59,9 +59,13 @@ class AppUpdateService {
   static const cacheFor = Duration(hours: 6);
   static const _manifestKey = 'app_update.manifest';
   static const _fetchedAtKey = 'app_update.fetched_at';
+  static const _networkFailedKey = 'app_update.network_failed';
   static const _channel = MethodChannel('com.example.money_traker/update');
 
   static UpdateOffer? _pending;
+
+  /// The last check that returned a readable release file.
+  static VersionCheck? lastSuccessfulCheck;
 
   /// Optional update kept for the home screen. A forced update is not stored.
   static UpdateOffer? takePendingOffer() {
@@ -72,6 +76,9 @@ class AppUpdateService {
 
   /// Never throws. No network, a bad file, or a timeout leaves the app usable.
   /// Returns a forced offer when the home screen must stay hidden.
+  ///
+  /// Uses the 6-hour saved copy when the last fetch succeeded. If that fetch
+  /// failed because of the network, the next open skips the saved copy.
   static Future<UpdateOffer?> check() async {
     if (!Platform.isAndroid) return null;
     final result = await checkLatest();
@@ -82,9 +89,11 @@ class AppUpdateService {
   /// Returns null when the version file cannot be read.
   static Future<VersionCheck?> checkLatest({bool refresh = false}) async {
     try {
-      return await _checkLatest(
+      final result = await _checkLatest(
         refresh: refresh,
       ).timeout(const Duration(seconds: 10));
+      if (result != null) lastSuccessfulCheck = result;
+      return result;
     } catch (e, stack) {
       debugPrint('App update check failed: $e\n$stack');
       return null;
@@ -138,10 +147,14 @@ class AppUpdateService {
     final cachedBody = prefs.getString(_manifestKey);
     final fetchedAt = prefs.getInt(_fetchedAtKey) ?? 0;
     final age = DateTime.now().millisecondsSinceEpoch - fetchedAt;
-    if (!refresh &&
+    final networkFailed = prefs.getBool(_networkFailedKey) ?? false;
+    final useCache =
+        !refresh &&
+        !networkFailed &&
         cachedBody != null &&
         age >= 0 &&
-        age < cacheFor.inMilliseconds) {
+        age < cacheFor.inMilliseconds;
+    if (useCache) {
       final cached = _decode(cachedBody);
       if (cached != null) return cached;
     }
@@ -157,9 +170,11 @@ class AppUpdateService {
       if (parsed == null) throw const FormatException('version.json');
       await prefs.setString(_manifestKey, response.body);
       await prefs.setInt(_fetchedAtKey, DateTime.now().millisecondsSinceEpoch);
+      await prefs.setBool(_networkFailedKey, false);
       return parsed;
     } catch (e) {
       debugPrint('App update request failed: $e');
+      await prefs.setBool(_networkFailedKey, true);
       if (cachedBody == null) return null;
       return _decode(cachedBody);
     }

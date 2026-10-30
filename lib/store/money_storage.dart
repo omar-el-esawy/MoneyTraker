@@ -694,6 +694,23 @@ class MoneyStorage {
     );
   }
 
+  Future<Map<int, int>> tagUsageCounts() async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT tagId AS tagId, COUNT(*) AS uses
+      FROM total_money_day_delta_entries
+      WHERE IFNULL(autoBalanced, 0) = 0
+      GROUP BY tagId
+    ''');
+    final counts = <int, int>{};
+    for (final row in rows) {
+      final tagId = (row['tagId'] as num?)?.toInt();
+      if (tagId == null) continue;
+      counts[tagId] = (row['uses'] as num?)?.toInt() ?? 0;
+    }
+    return counts;
+  }
+
   Future<Map<DateTime, double>> amountsForTag(int tagId) async {
     final db = await database;
     final rows = await db.rawQuery('''

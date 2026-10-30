@@ -14,6 +14,7 @@ import 'package:money_traker/pages/sms/bank_messages_page.dart';
 import 'package:money_traker/services/app_update.dart';
 import 'package:money_traker/services/app_update_logic.dart';
 import 'package:money_traker/services/backup_service.dart';
+import 'package:money_traker/services/inbox_store.dart';
 import 'package:money_traker/tour/app_tour.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -66,6 +67,8 @@ class _SettingsPageState extends State<SettingsPage> {
         );
         return;
       }
+      await InboxStore.instance.syncUpdateOffer(result.offer);
+      if (!mounted) return;
       final offer = result.offer;
       if (offer != null) {
         await showOptionalUpdateDialog(context, offer);

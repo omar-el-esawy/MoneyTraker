@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:money_traker/data/database_helper.dart';
 import 'package:money_traker/domain/entities/transaction_entity.dart';
 import 'package:money_traker/model/tag.dart';
+import 'package:money_traker/services/manual_category_guard.dart';
 import 'package:money_traker/sms/sms_category_plan.dart';
 import 'package:money_traker/sms/sms_models.dart';
 import 'package:money_traker/sms/sms_rule_engine.dart';
@@ -64,22 +65,6 @@ class SmsCategoryApplier {
       if (transaction?.id != null) relevant.add(transaction!);
     }
 
-    final previousByTag = <int, Map<DateTime, double>>{};
-    final previousEncoded = <int, String>{};
-    for (final transaction in relevant) {
-      final id = transaction.id;
-      final tagId = transaction.categoryTagId;
-      if (id == null || tagId == null) continue;
-      final slices = slicesFromTransaction(transaction);
-      final encoded = encodeCategoryAllocations(slices);
-      if (encoded == null) continue;
-      previousEncoded[id] = encoded;
-      final totals = previousByTag.putIfAbsent(tagId, () => {});
-      for (final entry in sumCategorySlices(slices).entries) {
-        totals[entry.key] = (totals[entry.key] ?? 0) + entry.value;
-      }
-    }
-
     final historyDays = await _storage.getTotalMoneyDays();
     bool historyHasDay(DateTime day) {
       for (final item in historyDays) {
@@ -90,7 +75,9 @@ class SmsCategoryApplier {
       return false;
     }
 
-    final events = <SmsCategoryEvent>[];
+    final handPicked = await ManualCategoryGuard.ids();
+    final planned = <int>{};
+    final choiceById = <int, SmsCategoryChoice>{};
     for (final copy in bankCopies) {
       if (!copy.sourceApplied || copy.smsId.isEmpty) continue;
       final transaction = bySmsId[copy.smsId];
@@ -104,12 +91,42 @@ class SmsCategoryApplier {
         tags: tags,
       );
       if (choice == null) continue;
+      choiceById[id] = choice;
       final day = categoryDay(copy.date);
       if (!choice.reduces && !historyHasDay(day)) continue;
+      planned.add(id);
+    }
+
+    final previousByTag = <int, Map<DateTime, double>>{};
+    final previousEncoded = <int, String>{};
+    for (final transaction in relevant) {
+      final id = transaction.id;
+      final tagId = transaction.categoryTagId;
+      if (id == null || tagId == null) continue;
+      if (keepHandPickedCategory(handPicked: handPicked.contains(id), rulePlanned: planned.contains(id))) {
+        continue;
+      }
+      final slices = slicesFromTransaction(transaction);
+      final encoded = encodeCategoryAllocations(slices);
+      if (encoded == null) continue;
+      previousEncoded[id] = encoded;
+      final totals = previousByTag.putIfAbsent(tagId, () => {});
+      for (final entry in sumCategorySlices(slices).entries) {
+        totals[entry.key] = (totals[entry.key] ?? 0) + entry.value;
+      }
+    }
+
+    final events = <SmsCategoryEvent>[];
+    for (final copy in bankCopies) {
+      if (!copy.sourceApplied || copy.smsId.isEmpty) continue;
+      final transaction = bySmsId[copy.smsId];
+      final id = transaction?.id;
+      final choice = id == null ? null : choiceById[id];
+      if (transaction == null || id == null || choice == null || !planned.contains(id)) continue;
       events.add(
         SmsCategoryEvent(
           transactionId: id,
-          day: day,
+          day: categoryDay(copy.date),
           tagId: choice.rule.tagId,
           amount: transaction.amount,
           addition: !choice.reduces,
@@ -159,6 +176,9 @@ class SmsCategoryApplier {
     for (final transaction in relevant) {
       final id = transaction.id;
       if (id == null) continue;
+      if (keepHandPickedCategory(handPicked: handPicked.contains(id), rulePlanned: planned.contains(id))) {
+        continue;
+      }
       final plan = plans[id];
       final encoded = plan == null ? null : encodeCategoryAllocations(plan.slices);
       final signed = plan == null || plan.slices.isEmpty ? null : plan.signed;
@@ -170,6 +190,7 @@ class SmsCategoryApplier {
       if (sameTag && sameAmount && sameSlices) continue;
       await _db.setTransactionCategory(id, tagId: tagId, amount: signed, allocations: encoded);
     }
+    await ManualCategoryGuard.forgetAll(planned);
   }
 
   bool _sameAmount(double? a, double? b) {

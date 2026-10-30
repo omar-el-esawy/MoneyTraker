@@ -57,8 +57,9 @@ const _cardBorder = Color(0xFFE6E8EC);
 
 class InsightsPage extends StatefulWidget {
   final bool showAmounts;
+  final int dataRevision;
 
-  const InsightsPage({super.key, this.showAmounts = true});
+  const InsightsPage({super.key, this.showAmounts = true, this.dataRevision = 0});
 
   @override
   State<InsightsPage> createState() => _InsightsPageState();
@@ -88,6 +89,14 @@ class _InsightsPageState extends State<InsightsPage> {
     super.initState();
     _load();
     _loadMainGoal();
+  }
+
+  @override
+  void didUpdateWidget(covariant InsightsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.dataRevision != widget.dataRevision) {
+      _load();
+    }
   }
 
   DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);

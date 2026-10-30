@@ -55,6 +55,13 @@ android {
     }
 
     buildTypes {
+        // Same key as the pipeline APK, so a USB debug install can replace it.
+        // Without android/key.properties, debug stays on the local debug keystore.
+        debug {
+            if (keystorePropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
         release {
             // Uses android/key.properties when present (CI release keystore).
             // Local release builds keep the debug keystore until that file exists.
