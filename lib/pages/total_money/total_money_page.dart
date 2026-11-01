@@ -19,10 +19,10 @@ class TotalMoneyPage extends StatefulWidget {
   final ValueChanged<bool> onShowAmountsChanged;
   final Map<String, double> moneySources;
   final Map<String, int> sourceIds;
-  final void Function(String, double) onAddSource;
-  final void Function(String, String, double, {DateTime? effectiveDate})
+  final Future<void> Function(String, double) onAddSource;
+  final Future<void> Function(String, String, double, {DateTime? effectiveDate})
   onEditSource;
-  final void Function(String) onDeleteSource;
+  final Future<void> Function(String) onDeleteSource;
 
   final Future<void> Function(
     String sourceName,
@@ -45,6 +45,7 @@ class TotalMoneyPage extends StatefulWidget {
 
   final Mission? mission;
   final void Function(Mission) onAddMission;
+  final Widget? headerAction;
 
   const TotalMoneyPage({
     super.key,
@@ -60,6 +61,7 @@ class TotalMoneyPage extends StatefulWidget {
     required this.onTransfer,
     this.mission,
     required this.onAddMission,
+    this.headerAction,
   });
 
   @override
@@ -237,7 +239,7 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
           ),
         ),
         SizedBox(
-          height: 140,
+          height: 154,
           child:
               _loadingGoals
                   ? const Center(
@@ -305,6 +307,15 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
                               ? const Color(0xFFFFEBEE)
                               : const Color(0xFFE8F5E9);
                       final pct = p.percent.clamp(0.0, 1.0);
+                      final completed = p.progress >= p.goal.targetAmount;
+                      final statusLabel =
+                          spentMode
+                              ? (completed ? 'Over limit' : 'On track')
+                              : (completed ? 'Reached' : 'In progress');
+                      final statusColor =
+                          spentMode && completed
+                              ? const Color(0xFFC62828)
+                              : const Color(0xFF2E7D32);
 
                       return InkWell(
                         borderRadius: BorderRadius.circular(16),
@@ -420,6 +431,15 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
                                   ),
                                 ],
                               ),
+                              const SizedBox(height: 6),
+                              Text(
+                                statusLabel,
+                                style: Theme.of(context).textTheme.labelSmall
+                                    ?.copyWith(
+                                      color: statusColor,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                              ),
                             ],
                           ),
                         ),
@@ -442,8 +462,185 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
       context: context,
       builder:
           (context) => AddMoneySourceDialog(
-            onAdd: (name, amount) => widget.onAddSource(name, amount),
+            onAdd: (name, amount) async {
+              await widget.onAddSource(name, amount);
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Money source added.')),
+              );
+            },
           ),
+    );
+  }
+
+  Future<void> _showQuickActionPicker(
+    BuildContext context, {
+    required bool isAdd,
+  }) async {
+    if (widget.moneySources.isEmpty) {
+      if (isAdd) {
+        _showAddSourceDialog(context);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Add a source before subtracting.')),
+        );
+      }
+      return;
+    }
+
+    final sourceName = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder:
+          (ctx) => SafeArea(
+            child: ListView(
+              shrinkWrap: true,
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              children: [
+                Text(
+                  isAdd ? 'Add to which source?' : 'Subtract from which source?',
+                  style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ...widget.moneySources.keys.map(
+                  (name) => ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      isAdd
+                          ? Icons.add_circle_outline
+                          : Icons.remove_circle_outline,
+                    ),
+                    title: Text(name),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(ctx).pop(name),
+                  ),
+                ),
+              ],
+            ),
+          ),
+    );
+    if (sourceName == null || !context.mounted) return;
+
+    final currentAmount = widget.moneySources[sourceName] ?? 0;
+    final draft = await _showQuickAdjustmentDialog(
+      context,
+      isAdd: isAdd,
+      sourceName: sourceName,
+      currentAmount: currentAmount,
+    );
+    if (draft == null || !context.mounted) return;
+
+    if (isAdd) {
+      await widget.onQuickAdd(
+        sourceName,
+        draft.amount,
+        categoryName: draft.categoryName,
+        categoryAmount: draft.categoryAmount,
+        effectiveDate: draft.effectiveDate,
+      );
+    } else {
+      await widget.onQuickSubtract(
+        sourceName,
+        draft.amount,
+        categoryName: draft.categoryName,
+        categoryAmount: draft.categoryAmount,
+        effectiveDate: draft.effectiveDate,
+      );
+    }
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(isAdd ? 'Amount added.' : 'Amount subtracted.')),
+    );
+  }
+
+  Future<void> _showTransferPicker(BuildContext context) async {
+    if (widget.moneySources.length < 2) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Add at least two sources to transfer.')),
+      );
+      return;
+    }
+
+    final sourceName = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder:
+          (ctx) => SafeArea(
+            child: ListView(
+              shrinkWrap: true,
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              children: [
+                Text(
+                  'Transfer from which source?',
+                  style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ...widget.moneySources.keys.map(
+                  (name) => ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.swap_horiz),
+                    title: Text(name),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(ctx).pop(name),
+                  ),
+                ),
+              ],
+            ),
+          ),
+    );
+    if (sourceName == null || !context.mounted) return;
+
+    final didTransfer = await _showTransferDialog(
+      context,
+      fromSource: sourceName,
+      fromCurrentAmount: widget.moneySources[sourceName] ?? 0,
+    );
+    if (didTransfer != true || !context.mounted) return;
+  }
+
+  Widget _buildQuickActions(BuildContext context) {
+    final actions = [
+      (
+        icon: Icons.add,
+        label: 'Add',
+        onTap: () => _showQuickActionPicker(context, isAdd: true),
+      ),
+      (
+        icon: Icons.remove,
+        label: 'Subtract',
+        onTap: () => _showQuickActionPicker(context, isAdd: false),
+      ),
+      (
+        icon: Icons.swap_horiz,
+        label: 'Transfer',
+        onTap: () => _showTransferPicker(context),
+      ),
+    ];
+
+    return Row(
+      children:
+          actions
+              .map(
+                (action) => Expanded(
+                  child: Padding(
+                    padding: const EdgeInsetsDirectional.only(end: 8),
+                    child: OutlinedButton.icon(
+                      onPressed: () => action.onTap(),
+                      icon: Icon(action.icon, size: 18),
+                      label: Text(action.label),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                  ),
+                ),
+              )
+              .toList(),
     );
   }
 
@@ -469,12 +666,17 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
       final double decrement = result['decrement'] ?? 0.0;
       final DateTime? effectiveDate = result['effectiveDate'] as DateTime?;
 
-      widget.onEditSource(
+      await widget.onEditSource(
         oldName,
         newName,
         newAmount,
         effectiveDate: effectiveDate,
       );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Money source updated.')),
+        );
+      }
 
       // Only decrease mission.targetAmount if user confirmed and mission exists
       if (_mission != null && decreaseMission && decrement > 0) {
@@ -505,8 +707,12 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
                 child: const Text('Cancel'),
               ),
               TextButton(
-                onPressed: () {
-                  widget.onDeleteSource(sourceName);
+                onPressed: () async {
+                  await widget.onDeleteSource(sourceName);
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Money source deleted.')),
+                  );
                   Navigator.of(context).pop();
                 },
                 child: const Text('Delete'),
@@ -793,6 +999,9 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
                         effectiveDate: draft.effectiveDate,
                       );
                       if (!sheetCtx.mounted) return;
+                      ScaffoldMessenger.of(sheetCtx).showSnackBar(
+                        const SnackBar(content: Text('Amount added.')),
+                      );
                       Navigator.of(sheetCtx).pop();
                     },
                   ),
@@ -816,6 +1025,9 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
                         effectiveDate: draft.effectiveDate,
                       );
                       if (!sheetCtx.mounted) return;
+                      ScaffoldMessenger.of(sheetCtx).showSnackBar(
+                        const SnackBar(content: Text('Amount subtracted.')),
+                      );
                       Navigator.of(sheetCtx).pop();
                     },
                   ),
@@ -895,8 +1107,11 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
                       );
 
                       if (confirmed == true) {
-                        widget.onDeleteSource(sourceName);
+                        await widget.onDeleteSource(sourceName);
                         if (!sheetCtx.mounted) return;
+                        ScaffoldMessenger.of(sheetCtx).showSnackBar(
+                          const SnackBar(content: Text('Money source deleted.')),
+                        );
                         Navigator.of(sheetCtx).pop();
                       }
                     },
@@ -972,6 +1187,11 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
     if (res == null) return false;
     try {
       await widget.onTransfer(fromSource, res.toSource, res.amount);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Transfer completed.')),
+        );
+      }
       return true;
     } catch (e) {
       if (!context.mounted) return false;
@@ -992,119 +1212,126 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
       child: SingleChildScrollView(
         child: Column(
           children: [
-            // Centered total money display with eye icon
+            // Keep the balance summary compact and aligned with the page action.
             KeyedSubtree(
               key: tour?.totalMoney,
-              child: Center(
-                child: Column(
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
                           'Total Money',
-                          style: Theme.of(context).textTheme.headlineMedium,
-                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.headlineSmall
+                              ?.copyWith(fontWeight: FontWeight.w700),
                         ),
-                        IconButton(
-                          key: tour?.hideAmounts,
-                          icon: Icon(
+                      ),
+                      IconButton(
+                        key: tour?.hideAmounts,
+                        icon: Icon(
+                          widget.showAmounts
+                              ? Icons.visibility
+                              : Icons.visibility_off,
+                          color: Colors.grey,
+                        ),
+                        onPressed: _toggleAmountsVisibility,
+                        tooltip:
                             widget.showAmounts
-                                ? Icons.visibility
-                                : Icons.visibility_off,
-                            color: Colors.grey,
-                          ),
-                          onPressed: _toggleAmountsVisibility,
-                          tooltip:
-                              widget.showAmounts
-                                  ? 'Hide amounts'
-                                  : 'Show amounts',
+                                ? 'Hide amounts'
+                                : 'Show amounts',
+                      ),
+                      if (widget.headerAction != null)
+                        widget.headerAction!,
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final isCompact = constraints.maxWidth < 560;
+                      final amountText = ObscurableAmount(
+                        amount: total.toStringAsFixed(2),
+                        visible: widget.showAmounts,
+                        textAlign: TextAlign.start,
+                        style: Theme.of(
+                          context,
+                        ).textTheme.displaySmall?.copyWith(
+                          color: const Color(0xFF2E7D32),
+                          fontWeight: FontWeight.bold,
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        final isCompact = constraints.maxWidth < 560;
-                        final amountText = ObscurableAmount(
-                          amount: total.toStringAsFixed(2),
-                          visible: widget.showAmounts,
-                          textAlign: TextAlign.center,
-                          style: Theme.of(
-                            context,
-                          ).textTheme.displayMedium?.copyWith(
-                            color: Colors.green,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        );
+                      );
 
-                        if (isCompact) {
-                          return Column(
-                            children: [
-                              FittedBox(
-                                fit: BoxFit.scaleDown,
-                                child: amountText,
-                              ),
-                              const SizedBox(height: 8),
-                              _buildMainGoalInline(context),
-                            ],
-                          );
-                        }
-
-                        return Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.end,
+                      if (isCompact) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Flexible(
-                              child: FittedBox(
-                                fit: BoxFit.scaleDown,
-                                child: amountText,
-                              ),
+                            FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: AlignmentDirectional.centerStart,
+                              child: amountText,
                             ),
-                            const SizedBox(width: 14),
-                            Flexible(child: _buildMainGoalInline(context)),
+                            const SizedBox(height: 8),
+                            _buildMainGoalInline(context),
                           ],
                         );
-                      },
-                    ),
-                  ],
-                ),
+                      }
+
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Flexible(
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: AlignmentDirectional.centerStart,
+                              child: amountText,
+                            ),
+                          ),
+                          const SizedBox(width: 14),
+                          Flexible(child: _buildMainGoalInline(context)),
+                        ],
+                      );
+                    },
+                  ),
+                ],
               ),
             ),
+            const SizedBox(height: 12),
+            _buildQuickActions(context),
             const SizedBox(height: 24),
 
             KeyedSubtree(key: tour?.goals, child: _buildGoalsStrip()),
 
             const SizedBox(height: 16),
-            // List of money sources using custom widget
-            ...widget.moneySources.entries.toList().asMap().entries.map((
-              indexed,
-            ) {
-              final entry = indexed.value;
-              return MoneySourceCard(
-                key: indexed.key == 0 ? tour?.firstSource : ValueKey(entry.key),
-                sourceName: entry.key,
-                amount: entry.value,
-                showAmount: widget.showAmounts,
-                onEdit:
-                    (newName, newAmount) => _showQuickActionsSheet(
-                      context,
-                      sourceName: entry.key,
-                      currentAmount: entry.value,
-                    ),
-                onDelete:
-                    () => _showDeleteConfirmationDialog(context, entry.key),
-              );
-            }),
+            if (widget.moneySources.isEmpty)
+              _buildEmptySourcesState(context)
+            else
+              ...widget.moneySources.entries.toList().asMap().entries.map((
+                indexed,
+              ) {
+                final entry = indexed.value;
+                return MoneySourceCard(
+                  key: indexed.key == 0 ? tour?.firstSource : ValueKey(entry.key),
+                  sourceName: entry.key,
+                  amount: entry.value,
+                  showAmount: widget.showAmounts,
+                  onEdit:
+                      (newName, newAmount) => _showQuickActionsSheet(
+                        context,
+                        sourceName: entry.key,
+                        currentAmount: entry.value,
+                      ),
+                  onDelete:
+                      () => _showDeleteConfirmationDialog(context, entry.key),
+                );
+              }),
             Center(
               child: Padding(
                 padding: const EdgeInsets.only(top: 8.0),
-                child: ElevatedButton.icon(
+                child: OutlinedButton.icon(
                   key: tour?.addSource,
                   onPressed: () => _showAddSourceDialog(context),
                   icon: const Icon(Icons.add),
                   label: const Text('Add Money Source'),
-                  style: ElevatedButton.styleFrom(
+                  style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 24,
                       vertical: 12,
@@ -1115,6 +1342,44 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildEmptySourcesState(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7FAF7),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFDCEBDD)),
+      ),
+      child: Column(
+        children: [
+          const Icon(
+            Icons.account_balance_wallet_outlined,
+            size: 30,
+            color: Color(0xFF4CAF50),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'No money sources yet',
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Add your first source to start tracking your balance.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: const Color(0xFF6B7280),
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
       ),
     );
   }
