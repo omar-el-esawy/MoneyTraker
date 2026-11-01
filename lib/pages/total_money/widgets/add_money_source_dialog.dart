@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:money_traker/pages/widgets/amount_calculator_sheet.dart';
 
 class AddMoneySourceDialog extends StatefulWidget {
-  final void Function(String, double) onAdd;
+  final Future<void> Function(String, double) onAdd;
 
   const AddMoneySourceDialog({super.key, required this.onAdd});
 
@@ -68,11 +68,12 @@ class _AddMoneySourceDialogState extends State<AddMoneySourceDialog> {
           child: const Text('Cancel'),
         ),
         ElevatedButton(
-          onPressed: () {
+          onPressed: () async {
             if (!_formKey.currentState!.validate()) return;
             final amount = _amount;
             if (amount == null) return;
-            widget.onAdd(_name, amount);
+            await widget.onAdd(_name, amount);
+            if (!mounted) return;
             Navigator.of(context).pop();
           },
           child: const Text('Add'),

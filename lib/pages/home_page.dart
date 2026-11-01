@@ -736,6 +736,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             _transferBetweenSources(from: from, to: to, amount: amount),
         mission: _mission,
         onAddMission: _addMission,
+        headerAction:
+            _selectedIndex == 0
+                ? NotificationBell(
+                  unreadCount: InboxStore.instance.unreadCount,
+                  onPressed: _openNotifications,
+                )
+                : null,
       ),
       HistoryPage(historyDays: _historyDays, showAmounts: _showAmounts),
       InsightsPage(showAmounts: _showAmounts, dataRevision: _insightsRevision),
@@ -750,13 +757,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             body: SafeArea(
               child: Column(
                 children: [
-                  Align(
-                    alignment: AlignmentDirectional.centerEnd,
-                    child: NotificationBell(
-                      unreadCount: InboxStore.instance.unreadCount,
-                      onPressed: _openNotifications,
+                  if (_selectedIndex != 0)
+                    Align(
+                      alignment: AlignmentDirectional.centerEnd,
+                      child: NotificationBell(
+                        unreadCount: InboxStore.instance.unreadCount,
+                        onPressed: _openNotifications,
+                      ),
                     ),
-                  ),
                   Expanded(child: pages[_selectedIndex]),
                 ],
               ),

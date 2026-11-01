@@ -44,7 +44,7 @@ class MoneySourceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const double cardHeight = 56;
+    const double cardHeight = 60;
     final style = Theme.of(context).textTheme.bodyLarge;
 
     return Slidable(
@@ -72,8 +72,9 @@ class MoneySourceCard extends StatelessWidget {
           margin: const EdgeInsets.symmetric(vertical: 4),
           padding: const EdgeInsets.symmetric(horizontal: 16),
           decoration: BoxDecoration(
-            color: Colors.grey[200],
-            borderRadius: BorderRadius.zero,
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFE8ECE8)),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withValues(alpha: 0.04),
@@ -104,6 +105,11 @@ class MoneySourceCard extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
+              ),
+              const Icon(
+                Icons.chevron_right,
+                size: 20,
+                color: Color(0xFF9CA3AF),
               ),
             ],
           ),
