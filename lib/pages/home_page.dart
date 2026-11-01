@@ -681,13 +681,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           for (var s in _sources.where((s) => s.id != null)) s.name: s.id!,
         },
         onAddSource: _addMoneySource,
-        onEditSource: (name, newName, newAmount, {DateTime? effectiveDate}) {
+        onEditSource: (name, newName, newAmount, {DateTime? effectiveDate}) async {
           final source = _sources.firstWhere(
             (s) => s.name == name,
             orElse: () => MoneySource.create(name: '', amount: 0.0),
           );
           if (source.id != null) {
-            _editMoneySource(
+            await _editMoneySource(
               source.id!,
               newName,
               newAmount,
@@ -695,13 +695,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             );
           }
         },
-        onDeleteSource: (name) {
+        onDeleteSource: (name) async {
           final source = _sources.firstWhere(
             (s) => s.name == name,
             orElse: () => MoneySource.create(name: '', amount: 0.0),
           );
           if (source.id != null) {
-            _deleteMoneySource(source.id!);
+            await _deleteMoneySource(source.id!);
           }
         },
         onQuickAdd:
