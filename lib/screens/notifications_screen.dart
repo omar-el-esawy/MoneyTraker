@@ -74,6 +74,43 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
+  Future<void> _chooseOther(InboxItem item) async {
+    if (_savingId != null) return;
+    try {
+      final categories = await InboxStore.instance.otherCategoriesFor(item);
+      if (!mounted) return;
+      if (categories.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _arabic ? 'مفيش تصنيفات تانية متاحة.' : 'No other categories are available.',
+            ),
+          ),
+        );
+        return;
+      }
+      final choice = await showModalBottomSheet<SuggestedCategory>(
+        context: context,
+        showDragHandle: true,
+        builder: (context) => _OtherCategoryPicker(
+          arabic: _arabic,
+          categories: categories,
+        ),
+      );
+      if (choice != null && mounted) await _choose(item, choice);
+    } catch (e) {
+      debugPrint('Other category loading failed: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _arabic ? 'متعذر تحميل التصنيفات.' : 'Could not load categories.',
+          ),
+        ),
+      );
+    }
+  }
+
   Future<void> _openUpdate(InboxItem item) async {
     final url = item.downloadUrl;
     final version = item.version;
@@ -218,6 +255,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   backgroundColor: AppConstants.primarySurface,
                   side: const BorderSide(color: AppConstants.primaryLight),
                 ),
+              if (item.hasOtherCategories)
+                ActionChip(
+                  avatar: const Icon(Icons.more_horiz, size: 18),
+                  label: Text(arabic ? 'تصنيف تاني' : 'Other category'),
+                  onPressed: _savingId == null ? () => _chooseOther(item) : null,
+                ),
             ],
           ),
           if (_savingId == item.id) ...[
@@ -282,6 +325,52 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           ),
         ],
       ],
+    );
+  }
+}
+
+class _OtherCategoryPicker extends StatelessWidget {
+  final bool arabic;
+  final List<SuggestedCategory> categories;
+
+  const _OtherCategoryPicker({
+    required this.arabic,
+    required this.categories,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: arabic ? TextDirection.rtl : TextDirection.ltr,
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  arabic ? 'اختار تصنيف تاني' : 'Choose another category',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final category in categories)
+                      ActionChip(
+                        label: Text(category.name),
+                        onPressed: () => Navigator.pop(context, category),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

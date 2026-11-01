@@ -17,6 +17,7 @@ class InboxItem {
   final String? preview;
   final bool needsCategory;
   final List<SuggestedCategory> suggestions;
+  final bool hasOtherCategories;
   final String? chosenName;
   final String? version;
   final int? buildNumber;
@@ -37,6 +38,7 @@ class InboxItem {
     this.preview,
     this.needsCategory = false,
     this.suggestions = const [],
+    this.hasOtherCategories = false,
     this.chosenName,
     this.version,
     this.buildNumber,
@@ -64,6 +66,7 @@ class InboxItem {
       preview: preview,
       needsCategory: needsCategory ?? this.needsCategory,
       suggestions: suggestions,
+      hasOtherCategories: hasOtherCategories,
       chosenName: clearChosenName ? null : (chosenName ?? this.chosenName),
       version: version,
       buildNumber: buildNumber,
@@ -86,6 +89,7 @@ class InboxItem {
         'preview': preview,
         'needsCategory': needsCategory,
         'suggestions': [for (final item in suggestions) item.toJson()],
+        'hasOtherCategories': hasOtherCategories,
         'chosenName': chosenName,
         'version': version,
         'buildNumber': buildNumber,
@@ -119,6 +123,7 @@ class InboxItem {
       preview: json['preview']?.toString(),
       needsCategory: json['needsCategory'] == true,
       suggestions: suggestions,
+      hasOtherCategories: json['hasOtherCategories'] == true,
       chosenName: json['chosenName']?.toString(),
       version: json['version']?.toString(),
       buildNumber: (json['buildNumber'] as num?)?.toInt(),
@@ -164,6 +169,7 @@ String updateInboxId(String version, int? buildNumber) => 'update-$version-${bui
 InboxItem transactionNotice({
   required TransactionEntity transaction,
   required List<SuggestedCategory> suggestions,
+  bool hasOtherCategories = false,
   required DateTime now,
 }) {
   final id = transaction.id!;
@@ -181,6 +187,7 @@ InboxItem transactionNotice({
     preview: smsPreview(transaction.rawSms),
     needsCategory: needsCategory,
     suggestions: needsCategory ? suggestions : const [],
+    hasOtherCategories: needsCategory && hasOtherCategories,
   );
 }
 
@@ -199,6 +206,7 @@ ArrivalPlan planBankArrivals({
   required List<InboxItem> items,
   required List<TransactionEntity> transactions,
   required List<SuggestedCategory> Function(TransactionEntity transaction) suggestionsFor,
+  bool Function(TransactionEntity transaction)? hasOtherCategoriesFor,
   required DateTime now,
   Set<int>? baselineIds,
 }) {
@@ -232,6 +240,7 @@ ArrivalPlan planBankArrivals({
       transactionNotice(
         transaction: transaction,
         suggestions: suggestionsFor(transaction),
+        hasOtherCategories: hasOtherCategoriesFor?.call(transaction) ?? false,
         now: now,
       ),
   ];

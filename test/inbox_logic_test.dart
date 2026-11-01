@@ -76,9 +76,12 @@ void main() {
         tags: const [
           Tag(id: 4, name: 'Food', type: TagType.expense),
           Tag(id: 5, name: 'Rent', type: TagType.expense),
+          Tag(id: 6, name: 'Bills', type: TagType.expense),
+          Tag(id: 7, name: 'Health', type: TagType.expense),
         ],
         usageByTagId: const {5: 4, 4: 1},
       ),
+      hasOtherCategoriesFor: (_) => true,
       now: now,
     );
 
@@ -88,6 +91,7 @@ void main() {
     expect(notice.needsCategory, isTrue);
     expect(notice.debit, isTrue);
     expect(notice.suggestions.map((item) => item.name).toList(), ['Rent', 'Food', 'Transport']);
+    expect(notice.hasOtherCategories, isTrue);
   });
 
   test('a transfer that already has a category does not ask again', () {

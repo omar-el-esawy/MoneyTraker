@@ -63,6 +63,20 @@ class InboxStore extends ChangeNotifier {
           tags: tags,
           usageByTagId: usage,
         ),
+        hasOtherCategoriesFor: (transaction) {
+          final type = transaction.type == TransactionType.debit
+              ? TagType.expense
+              : TagType.income;
+          final available = tags.where((tag) {
+            final name = tag.name.trim().toLowerCase();
+            return tag.type == type && tag.id != null && name.isNotEmpty && name != 'others';
+          });
+          return available.length > suggestionsForTransaction(
+            transaction: transaction,
+            tags: tags,
+            usageByTagId: usage,
+          ).length;
+        },
       );
       _seeded = plan.seeded;
       _seen = plan.seenIds;
@@ -139,6 +153,22 @@ class InboxStore extends ChangeNotifier {
       await _write();
       notifyListeners();
     });
+  }
+
+  Future<List<SuggestedCategory>> otherCategoriesFor(InboxItem item) async {
+    if (item.suggestions.isEmpty) return const [];
+    final suggestedNames = {
+      for (final suggestion in item.suggestions) suggestion.name.trim().toLowerCase(),
+    };
+    final tags = await _storage.getTags(type: item.suggestions.first.type);
+    return [
+      for (final tag in tags)
+        if (tag.id != null &&
+            tag.name.trim().isNotEmpty &&
+            tag.name.trim().toLowerCase() != 'others' &&
+            !suggestedNames.contains(tag.name.trim().toLowerCase()))
+          SuggestedCategory(tagId: tag.id, name: tag.name.trim(), type: tag.type),
+    ];
   }
 
   Future<T> _serial<T>(Future<T> Function() action) {
