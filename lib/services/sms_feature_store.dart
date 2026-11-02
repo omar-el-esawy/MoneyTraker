@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:money_traker/data/database_helper.dart';
 import 'package:money_traker/sms/sms_models.dart';
 
 class SmsFeatureStore {
@@ -24,6 +25,14 @@ class SmsFeatureStore {
   }
 
   Future<void> save(SmsFeatureConfig config) async {
+    final previous = await load();
+    final oldStart = previous.startDate;
+    final newStart = config.startDate;
+    if (oldStart != null &&
+        newStart != null &&
+        newStart.isAfter(oldStart)) {
+      await DatabaseHelper.instance.deleteStoredSmsBefore(newStart);
+    }
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(prefsKey, jsonEncode(config.toJson()));
   }

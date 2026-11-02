@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 enum SmsField { amount, balance, account }
 
 enum SmsCopyStatus { pending, parsed, unreadable }
@@ -281,12 +283,67 @@ class SmsReadRule {
   }
 }
 
+class SmsPatternWord {
+  final int index;
+  final String word;
+
+  const SmsPatternWord({required this.index, required this.word});
+
+  Map<String, dynamic> toJson() => {'index': index, 'word': word};
+
+  factory SmsPatternWord.fromJson(Map<String, dynamic> json) {
+    return SmsPatternWord(
+      index: (json['index'] as num?)?.toInt() ?? -1,
+      word: json['word'] as String? ?? '',
+    );
+  }
+}
+
+class SmsRulePattern {
+  final int tokenCount;
+  final List<SmsPatternWord> words;
+
+  const SmsRulePattern({required this.tokenCount, required this.words});
+
+  bool get isValid =>
+      tokenCount > 0 &&
+      words.isNotEmpty &&
+      words.every((word) => word.index >= 0 && word.index < tokenCount && word.word.trim().isNotEmpty);
+
+  String get key => jsonEncode({
+        'tokenCount': tokenCount,
+        'words': [for (final word in words) word.toJson()],
+      });
+
+  String get display => words.map((word) => word.word).join(' … ');
+
+  Map<String, dynamic> toJson() => {
+        'tokenCount': tokenCount,
+        'words': [for (final word in words) word.toJson()],
+      };
+
+  factory SmsRulePattern.fromJson(Map<String, dynamic> json) {
+    final rawWords = json['words'];
+    return SmsRulePattern(
+      tokenCount: (json['tokenCount'] as num?)?.toInt() ?? 0,
+      words: rawWords is List
+          ? [
+              for (final item in rawWords)
+                if (item is Map)
+                  SmsPatternWord.fromJson(Map<String, dynamic>.from(item)),
+            ]
+          : const [],
+    );
+  }
+}
+
 class SmsCategoryRule {
   final int? id;
   final String bankId;
   final String word;
   final int tagId;
   final DateTime createdAt;
+  final SmsRulePattern? pattern;
 
   const SmsCategoryRule({
     this.id,
@@ -294,6 +351,7 @@ class SmsCategoryRule {
     required this.word,
     required this.tagId,
     required this.createdAt,
+    this.pattern,
   });
 
   Map<String, dynamic> toMap() => {
@@ -301,6 +359,7 @@ class SmsCategoryRule {
         'bank_id': bankId,
         'word': word,
         'tag_id': tagId,
+        'pattern': pattern == null ? null : jsonEncode(pattern!.toJson()),
         'created_at': createdAt.millisecondsSinceEpoch,
       };
 
@@ -310,6 +369,7 @@ class SmsCategoryRule {
       bankId: map['bank_id'] as String? ?? '',
       word: map['word'] as String? ?? '',
       tagId: (map['tag_id'] as num?)?.toInt() ?? 0,
+      pattern: _patternFromMap(map['pattern']),
       createdAt: DateTime.fromMillisecondsSinceEpoch((map['created_at'] as int?) ?? 0),
     );
   }
@@ -321,6 +381,7 @@ class SmsTypeWord {
   final String word;
   final String typeHint;
   final DateTime createdAt;
+  final SmsRulePattern? pattern;
 
   const SmsTypeWord({
     this.id,
@@ -328,6 +389,7 @@ class SmsTypeWord {
     required this.word,
     required this.typeHint,
     required this.createdAt,
+    this.pattern,
   });
 
   Map<String, dynamic> toMap() => {
@@ -335,6 +397,7 @@ class SmsTypeWord {
         'bank_id': bankId,
         'word': word,
         'type_hint': typeHint,
+        'pattern': pattern == null ? null : jsonEncode(pattern!.toJson()),
         'created_at': createdAt.millisecondsSinceEpoch,
       };
 
@@ -344,9 +407,24 @@ class SmsTypeWord {
       bankId: map['bank_id'] as String? ?? '',
       word: map['word'] as String? ?? '',
       typeHint: map['type_hint'] as String? ?? '',
+      pattern: _patternFromMap(map['pattern']),
       createdAt: DateTime.fromMillisecondsSinceEpoch((map['created_at'] as int?) ?? 0),
     );
   }
+}
+
+SmsRulePattern? _patternFromMap(Object? raw) {
+  if (raw is! String || raw.trim().isEmpty) return null;
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is Map) {
+      final pattern = SmsRulePattern.fromJson(Map<String, dynamic>.from(decoded));
+      return pattern.isValid ? pattern : null;
+    }
+  } catch (_) {
+    return null;
+  }
+  return null;
 }
 
 class SmsNumberSpan {
