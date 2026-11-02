@@ -72,6 +72,7 @@ class _BankMessagesPageState extends State<BankMessagesPage> {
     );
     if (picked == null) return;
     await _save(config.copyWith(startDate: picked));
+    await _load();
   }
 
   Future<void> _applyFromStart() async {

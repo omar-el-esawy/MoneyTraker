@@ -11,7 +11,7 @@ class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._();
 
   static const _dbName = 'money_traker_sms.db';
-  static const _dbVersion = 8;
+  static const _dbVersion = 9;
 
   Database? _database;
 
@@ -115,6 +115,9 @@ class DatabaseHelper {
         if (oldVersion < 8) {
           await _addCategoryColumns(db);
         }
+        if (oldVersion < 9) {
+          await _addRulePatternColumns(db);
+        }
       },
     );
   }
@@ -156,6 +159,23 @@ class DatabaseHelper {
     final db = await database;
     final rows = await db.query('sms_copies', orderBy: 'date DESC');
     return rows.map(SmsCopy.fromMap).toList();
+  }
+
+  Future<void> deleteStoredSmsBefore(DateTime date) async {
+    final db = await database;
+    final boundary = DateTime(date.year, date.month, date.day).millisecondsSinceEpoch;
+    await db.transaction((txn) async {
+      await txn.delete(
+        'sms_copies',
+        where: 'date < ?',
+        whereArgs: [boundary],
+      );
+      await txn.delete(
+        'raw_sms',
+        where: 'date < ?',
+        whereArgs: [boundary],
+      );
+    });
   }
 
   Future<void> updateSmsCopyStatus(int id, SmsCopyStatus status) async {
@@ -240,7 +260,11 @@ class DatabaseHelper {
     final existing = await getSmsCategoryRules(bankId: rule.bankId);
     for (final item in existing) {
       final id = item.id;
-      if (id != null && item.word.toLowerCase() == rule.word.toLowerCase()) {
+      final samePattern = item.pattern?.key == rule.pattern?.key;
+      final sameLegacyWord =
+          item.pattern == null && rule.pattern == null &&
+          item.word.toLowerCase() == rule.word.toLowerCase();
+      if (id != null && (samePattern || sameLegacyWord)) {
         await deleteSmsCategoryRule(id);
       }
     }
@@ -514,12 +538,13 @@ Future<void> _createSmsTypeWordTable(Database db) async {
       bank_id TEXT NOT NULL,
       word TEXT NOT NULL,
       type_hint TEXT NOT NULL,
+      pattern TEXT,
       created_at INTEGER NOT NULL
     )
   ''');
   await db.execute('''
     CREATE UNIQUE INDEX IF NOT EXISTS idx_sms_type_words_unique
-    ON sms_type_words(bank_id, word, type_hint)
+    ON sms_type_words(bank_id, word, type_hint, pattern)
   ''');
 }
 
@@ -628,13 +653,34 @@ Future<void> _createSmsCategoryRuleTable(Database db) async {
       bank_id TEXT NOT NULL,
       word TEXT NOT NULL,
       tag_id INTEGER NOT NULL,
+      pattern TEXT,
       created_at INTEGER NOT NULL
     )
   ''');
   await db.execute('''
     CREATE UNIQUE INDEX IF NOT EXISTS idx_sms_category_rules_unique
-    ON sms_category_rules(bank_id, word)
+    ON sms_category_rules(bank_id, word, pattern)
   ''');
+}
+
+Future<void> _addRulePatternColumns(Database db) async {
+  for (final table in ['sms_type_words', 'sms_category_rules']) {
+    final cols = await db.rawQuery("PRAGMA table_info('$table')");
+    final names = cols.map((c) => c['name'] as String?).toSet();
+    if (!names.contains('pattern')) {
+      await db.execute('ALTER TABLE $table ADD COLUMN pattern TEXT');
+    }
+  }
+  await db.execute('DROP INDEX IF EXISTS idx_sms_type_words_unique');
+  await db.execute(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_sms_type_words_unique '
+    'ON sms_type_words(bank_id, word, type_hint, pattern)',
+  );
+  await db.execute('DROP INDEX IF EXISTS idx_sms_category_rules_unique');
+  await db.execute(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_sms_category_rules_unique '
+    'ON sms_category_rules(bank_id, word, pattern)',
+  );
 }
 
 Future<void> _addCategoryColumns(Database db) async {
@@ -661,4 +707,3 @@ Future<void> _addReadingColumns(Database db) async {
     await db.execute('ALTER TABLE transactions ADD COLUMN account_hint TEXT');
   }
 }
-

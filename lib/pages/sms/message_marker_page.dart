@@ -65,6 +65,8 @@ class _MessageMarkerPageState extends State<MessageMarkerPage> {
   List<SmsTypeWord> _savedWords = [];
   List<SmsCategoryRule> _savedCategoryRules = [];
   Map<int, Tag> _tagsById = {};
+  String? _markMode;
+  int? _activeCategoryTagId;
   bool _saving = false;
   bool _loading = true;
 
@@ -95,6 +97,19 @@ class _MessageMarkerPageState extends State<MessageMarkerPage> {
       final savedTypes = [...words]
         ..sort((a, b) => b.word.length.compareTo(a.word.length));
       for (final saved in savedTypes) {
+        final pattern = saved.pattern;
+        if (pattern != null && pattern.tokenCount == SmsRuleEngine.tokenize(widget.copy.body).length) {
+          final tokens = SmsRuleEngine.tokenize(widget.copy.body);
+          for (final selected in pattern.words) {
+            final token = tokens[selected.index];
+            _wordMarks[token.start] = _WordMark(
+              start: token.start,
+              end: token.end,
+              typeHint: saved.typeHint,
+            );
+          }
+          continue;
+        }
         final hit = SmsRuleEngine.locateText(widget.copy.body, saved.word);
         if (hit == null) continue;
         final covered = _wordMarks.values.any(
@@ -116,6 +131,19 @@ class _MessageMarkerPageState extends State<MessageMarkerPage> {
       final savedCategories = [...categoryRules]
         ..sort((a, b) => b.word.length.compareTo(a.word.length));
       for (final saved in savedCategories) {
+        final pattern = saved.pattern;
+        if (pattern != null && pattern.tokenCount == SmsRuleEngine.tokenize(widget.copy.body).length) {
+          final tokens = SmsRuleEngine.tokenize(widget.copy.body);
+          for (final selected in pattern.words) {
+            final token = tokens[selected.index];
+            _categoryMarks[token.start] = _CategoryMark(
+              start: token.start,
+              end: token.end,
+              tagId: saved.tagId,
+            );
+          }
+          continue;
+        }
         final hit = SmsRuleEngine.locateText(widget.copy.body, saved.word);
         if (hit == null) continue;
         final covered = _categoryMarks.values.any(
@@ -134,8 +162,78 @@ class _MessageMarkerPageState extends State<MessageMarkerPage> {
           tagId: saved.tagId,
         );
       }
+
       _loading = false;
     });
+  }
+
+  SmsRulePattern? _patternForMarks(Iterable<dynamic> marks) {
+    final tokens = SmsRuleEngine.tokenize(widget.copy.body);
+    final selected = <SmsPatternWord>[];
+    for (var index = 0; index < tokens.length; index++) {
+      final token = tokens[index];
+      final included = marks.any(
+        (mark) => _overlaps(token.start, token.end, mark.start, mark.end),
+      );
+      if (!included) continue;
+      final word = SmsRuleEngine.normalizeWord(token.text);
+      if (word.isNotEmpty) {
+        selected.add(SmsPatternWord(index: index, word: word));
+      }
+    }
+    if (selected.isEmpty) return null;
+    return SmsRulePattern(tokenCount: tokens.length, words: selected);
+  }
+
+  Future<void> _openTokenAction(SmsToken token) async {
+    if (_markMode == 'debit' || _markMode == 'credit') {
+      setState(() {
+        final existing = _wordMarks[token.start];
+        if (existing?.typeHint == _markMode) {
+          _wordMarks.remove(token.start);
+          return;
+        }
+        _categoryMarks.removeWhere(
+          (_, mark) => _overlaps(token.start, token.end, mark.start, mark.end),
+        );
+        _wordMarks[token.start] = _WordMark(
+          start: token.start,
+          end: token.end,
+          typeHint: _markMode!,
+        );
+      });
+      return;
+    }
+    if (_markMode == 'category') {
+      if (_activeCategoryTagId == null) {
+        final tag = await showSmsCategoryPicker(
+          context: context,
+          arabic: widget.arabic,
+          word: token.text,
+        );
+        if (!mounted || tag?.id == null) return;
+        final picked = tag!;
+        _tagsById[picked.id!] = picked;
+        _activeCategoryTagId = picked.id;
+      }
+      setState(() {
+        final existing = _categoryMarks[token.start];
+        if (existing?.tagId == _activeCategoryTagId) {
+          _categoryMarks.remove(token.start);
+          return;
+        }
+        _wordMarks.removeWhere(
+          (_, mark) => _overlaps(token.start, token.end, mark.start, mark.end),
+        );
+        _categoryMarks[token.start] = _CategoryMark(
+          start: token.start,
+          end: token.end,
+          tagId: _activeCategoryTagId!,
+        );
+      });
+      return;
+    }
+    await _openSelectionSheet(token.start, token.end);
   }
 
   bool _overlaps(int start, int end, int otherStart, int otherEnd) {
@@ -344,17 +442,20 @@ class _MessageMarkerPageState extends State<MessageMarkerPage> {
   }
 
   List<SmsCategoryRule> _draftCategoryRules() {
-    final seen = <String>{};
     final rules = <SmsCategoryRule>[];
+    final byTag = <int, List<_CategoryMark>>{};
     for (final mark in _categoryMarks.values) {
-      final word = _markedText(mark.start, mark.end);
-      if (word.isEmpty) continue;
-      if (!seen.add(word.toLowerCase())) continue;
+      byTag.putIfAbsent(mark.tagId, () => []).add(mark);
+    }
+    for (final entry in byTag.entries) {
+      final pattern = _patternForMarks(entry.value);
+      if (pattern == null) continue;
       rules.add(
         SmsCategoryRule(
           bankId: widget.copy.bankId,
-          word: word,
-          tagId: mark.tagId,
+          word: pattern.display,
+          tagId: entry.key,
+          pattern: pattern,
           createdAt: DateTime.now(),
         ),
       );
@@ -364,15 +465,21 @@ class _MessageMarkerPageState extends State<MessageMarkerPage> {
 
   List<SmsCategoryRule> _categoryRulesToDelete() {
     final keep = {
-      for (final rule in _draftCategoryRules()) rule.word.toLowerCase(),
+      for (final rule in _draftCategoryRules())
+        rule.pattern?.key ?? rule.word.toLowerCase(),
     };
     final rules = <SmsCategoryRule>[];
     for (final saved in _savedCategoryRules) {
-      final inMessage =
-          SmsRuleEngine.locateText(widget.copy.body, saved.word) != null;
+      final inMessage = SmsRuleEngine.locateRule(
+            widget.copy.body,
+            saved.pattern,
+            saved.word,
+          ) !=
+          null;
+      final key = saved.pattern?.key ?? saved.word.toLowerCase();
       if (saved.id != null &&
           inMessage &&
-          !keep.contains(saved.word.toLowerCase())) {
+          !keep.contains(key)) {
         rules.add(saved);
       }
     }
@@ -380,18 +487,20 @@ class _MessageMarkerPageState extends State<MessageMarkerPage> {
   }
 
   List<SmsTypeWord> _draftTypeWords() {
-    final seen = <String>{};
     final words = <SmsTypeWord>[];
+    final byType = <String, List<_WordMark>>{};
     for (final mark in _wordMarks.values) {
-      final word = _markedText(mark.start, mark.end);
-      if (word.isEmpty) continue;
-      final key = '${word.toLowerCase()}|${mark.typeHint}';
-      if (!seen.add(key)) continue;
+      byType.putIfAbsent(mark.typeHint, () => []).add(mark);
+    }
+    for (final entry in byType.entries) {
+      final pattern = _patternForMarks(entry.value);
+      if (pattern == null) continue;
       words.add(
         SmsTypeWord(
           bankId: widget.copy.bankId,
-          word: word,
-          typeHint: mark.typeHint,
+          word: pattern.display,
+          typeHint: entry.key,
+          pattern: pattern,
           createdAt: DateTime.now(),
         ),
       );
@@ -453,13 +562,14 @@ class _MessageMarkerPageState extends State<MessageMarkerPage> {
       final drafts = _draftTypeWords();
       final keep = {
         for (final word in drafts)
-          '${word.word.toLowerCase()}|${word.typeHint}',
+          '${word.pattern?.key ?? word.word.toLowerCase()}|${word.typeHint}',
       };
       final wordsToDelete = <SmsTypeWord>[];
       for (final saved in _savedWords) {
-        final key = '${saved.word.toLowerCase()}|${saved.typeHint}';
+        final key =
+            '${saved.pattern?.key ?? saved.word.toLowerCase()}|${saved.typeHint}';
         final stillInMessage =
-            SmsRuleEngine.locateText(widget.copy.body, saved.word) != null;
+            SmsRuleEngine.locateRule(widget.copy.body, saved.pattern, saved.word) != null;
         if (saved.id != null && stillInMessage && !keep.contains(key)) {
           wordsToDelete.add(saved);
         }
@@ -590,12 +700,56 @@ class _MessageMarkerPageState extends State<MessageMarkerPage> {
                     style: const TextStyle(color: AppConstants.textSecondary),
                   ),
                   const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      ChoiceChip(
+                        label: Text(s.wordMeansDebit),
+                        selected: _markMode == 'debit',
+                        onSelected: (selected) => setState(() {
+                          _markMode = selected ? 'debit' : null;
+                          _activeCategoryTagId = null;
+                        }),
+                      ),
+                      ChoiceChip(
+                        label: Text(s.wordMeansCredit),
+                        selected: _markMode == 'credit',
+                        onSelected: (selected) => setState(() {
+                          _markMode = selected ? 'credit' : null;
+                          _activeCategoryTagId = null;
+                        }),
+                      ),
+                      ChoiceChip(
+                        label: Text(s.wordMeansCategory),
+                        selected: _markMode == 'category',
+                        onSelected: (selected) => setState(() {
+                          _markMode = selected ? 'category' : null;
+                          _activeCategoryTagId = null;
+                        }),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(16),
-                      child: widget.copy.body.isEmpty
-                          ? Text(s.noNumbers)
-                          : SelectableText.rich(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (widget.copy.body.isEmpty)
+                            Text(s.noNumbers)
+                          else
+                            Wrap(
+                              spacing: 6,
+                              runSpacing: 8,
+                              children: [
+                                for (final token in SmsRuleEngine.tokenize(widget.copy.body))
+                                  _tokenChip(token),
+                              ],
+                            ),
+                          const SizedBox(height: 16),
+                          if (widget.copy.body.isNotEmpty)
+                            SelectableText.rich(
                               TextSpan(
                                 style: bodyStyle,
                                 children: _bodySpans(bodyStyle),
@@ -635,6 +789,8 @@ class _MessageMarkerPageState extends State<MessageMarkerPage> {
                                 );
                               },
                             ),
+                        ],
+                      ),
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -669,6 +825,39 @@ class _MessageMarkerPageState extends State<MessageMarkerPage> {
                   ],
                 ],
               ),
+      ),
+    );
+  }
+
+  Widget _tokenChip(SmsToken token) {
+    final type = _wordMarks[token.start];
+    final category = _categoryMarks[token.start];
+    final selected = type != null || category != null;
+    final color = type?.typeHint == 'debit'
+        ? const Color(0xFFFFD6D6)
+        : type?.typeHint == 'credit'
+        ? AppConstants.primarySurface
+        : category != null
+        ? const Color(0xFFEDE4FF)
+        : Theme.of(context).colorScheme.surfaceContainerHighest;
+    return GestureDetector(
+      onTap: () => _openTokenAction(token),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: selected
+                ? Theme.of(context).colorScheme.primary
+                : Theme.of(context).dividerColor,
+            width: selected ? 1.5 : 1,
+          ),
+        ),
+        child: Text(
+          token.text,
+          style: TextStyle(fontWeight: selected ? FontWeight.w700 : FontWeight.w400),
+        ),
       ),
     );
   }

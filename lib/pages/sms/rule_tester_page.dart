@@ -68,12 +68,14 @@ class _RuleTesterPageState extends State<RuleTesterPage> {
     );
     final deleteKeys = {
       for (final word in widget.wordsToDelete)
-        '${word.word.toLowerCase()}|${word.typeHint}',
+        '${word.pattern?.key ?? word.word.toLowerCase()}|${word.typeHint}',
     };
     final words = <SmsTypeWord>[
       ...existingWords.where(
         (word) =>
-            !deleteKeys.contains('${word.word.toLowerCase()}|${word.typeHint}'),
+            !deleteKeys.contains(
+              '${word.pattern?.key ?? word.word.toLowerCase()}|${word.typeHint}',
+            ),
       ),
       ...widget.draftTypeWords,
     ];
@@ -82,7 +84,8 @@ class _RuleTesterPageState extends State<RuleTesterPage> {
       for (final rule in widget.categoryRulesToDelete) rule.id,
     };
     final draftWords = {
-      for (final rule in widget.draftCategoryRules) rule.word.toLowerCase(),
+      for (final rule in widget.draftCategoryRules)
+        rule.pattern?.key ?? rule.word.toLowerCase(),
     };
     final existingCategories = await DatabaseHelper.instance
         .getSmsCategoryRules(bankId: widget.bankId);
@@ -90,7 +93,7 @@ class _RuleTesterPageState extends State<RuleTesterPage> {
       ...existingCategories.where(
         (rule) =>
             !deleteCategoryIds.contains(rule.id) &&
-            !draftWords.contains(rule.word.toLowerCase()),
+            !draftWords.contains(rule.pattern?.key ?? rule.word.toLowerCase()),
       ),
       ...widget.draftCategoryRules,
     ];

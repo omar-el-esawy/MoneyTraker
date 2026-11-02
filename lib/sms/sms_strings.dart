@@ -54,8 +54,8 @@ class SmsStrings {
   String get pending => ar ? 'بانتظار التعليم' : 'Waiting to be marked';
   String get unreadable => ar ? 'لم تطابق قاعدة' : 'No matching rule';
   String get markHint => ar
-      ? 'حدّد المبلغ حتى لو لازق في حروف زي EGP. وحدّد أي جزء من النص يعني خصم أو إيداع أو تصنيف. لما نفس الجزء يظهر في رسالة جاية، هيعمل نفس الحاجة.'
-      : 'Select the amount, even when it is stuck to letters such as EGP. Select any part of the text that means a debit, a credit, or a category. When that same text appears in a later message, it does the same thing.';
+      ? 'اختار نوع القاعدة أولاً، ثم دوس على مربعات الكلمات. تقدر تختار كلمات مش ورا بعض؛ الكلمات المختارة لازم تظهر في نفس ترتيب ومواقع الرسالة. حدّد المبلغ حتى لو لازق في حروف زي EGP.'
+      : 'Choose the rule type first, then tap the word boxes. You can choose non-adjacent words; selected words must appear at the same positions in a later message. Mark the amount even when it is stuck to letters such as EGP.';
   String get noNumbers =>
       ar ? 'لا توجد أرقام في هذه الرسالة.' : 'This message has no numbers.';
   String get moneySource => ar ? 'مصدر المال' : 'Money source';

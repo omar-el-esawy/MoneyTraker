@@ -458,19 +458,71 @@ void main() {
     },
   );
 
-  test('a match from another sender does not block the rule', () {
+  test('type and category patterns require selected words at exact token positions', () {
+    final pattern = SmsRulePattern(
+      tokenCount: 6,
+      words: const [
+        SmsPatternWord(index: 0, word: 'تم'),
+        SmsPatternWord(index: 2, word: 'خصم'),
+      ],
+    );
+    final typeWord = SmsTypeWord(
+      bankId: 'cib',
+      word: pattern.display,
+      typeHint: 'debit',
+      pattern: pattern,
+      createdAt: DateTime(2026),
+    );
+    expect(
+      SmsRuleEngine.detectType('تم تحويل خصم 150 جنيه اليوم', [typeWord]),
+      'debit',
+    );
+    expect(
+      SmsRuleEngine.detectType('تم خصم 150 جنيه اليوم', [typeWord]),
+      '',
+    );
+    expect(
+      SmsRuleEngine.detectType('تم تحويل خصم 150 جنيه', [typeWord]),
+      '',
+    );
+
+    final category = SmsCategoryRule(
+      bankId: 'cib',
+      word: pattern.display,
+      tagId: 7,
+      pattern: pattern,
+      createdAt: DateTime(2026),
+    );
+    expect(
+      SmsRuleEngine.rankCategoryRules(
+        'تم تحويل خصم 150 جنيه اليوم',
+        [category],
+      ),
+      [category],
+    );
+    expect(
+      SmsRuleEngine.rankCategoryRules(
+        'تم تحويل خصم 150 جنيه',
+        [category],
+      ),
+      isEmpty,
+    );
+  });
+
+  test('a rule requires both prefix and suffix', () {
     final report = SmsRuleEngine.test(
       corpus: [
-        _copy(sender: 'HSBC', body: 'Salary EGP 100'),
-        _copy(sender: 'CIB', body: 'Cashback EGP 90'),
-        _copy(sender: 'CIB', body: 'Refund EGP 40'),
+        _copy(sender: 'HSBC', body: 'Salary EGP 100 USD'),
+        _copy(sender: 'HSBC', body: 'Salary 100 USD'),
+        _copy(sender: 'HSBC', body: '100 USD'),
+        _copy(sender: 'CIB', body: 'Cashback EGP 90 USD'),
       ],
       rules: [
         SmsReadRule(
           bankId: 'hsbc',
           field: SmsField.amount,
-          prefix: 'EGP',
-          suffix: '',
+          prefix: 'Salary EGP',
+          suffix: 'USD',
           typeHint: 'credit',
           createdAt: DateTime(2026),
         ),
@@ -479,8 +531,37 @@ void main() {
       senders: const ['HSBC'],
     );
     expect(report.matched, 1);
-    expect(report.foreignMatches, 2);
+    expect(report.foreignMatches, 1);
     expect(report.tooGeneric, isFalse);
+  });
+
+  test('prefix-only and suffix-only rules do not extract values', () {
+    expect(
+      SmsRuleEngine.extract(
+        'Salary EGP 100',
+        SmsReadRule(
+          bankId: 'hsbc',
+          field: SmsField.amount,
+          prefix: 'Salary EGP',
+          suffix: '',
+          createdAt: DateTime(2026),
+        ),
+      ),
+      isNull,
+    );
+    expect(
+      SmsRuleEngine.extract(
+        'Salary 100 USD',
+        SmsReadRule(
+          bankId: 'hsbc',
+          field: SmsField.amount,
+          prefix: '',
+          suffix: 'USD',
+          createdAt: DateTime(2026),
+        ),
+      ),
+      isNull,
+    );
   });
 
   test('saved text is matched again even when it is more than one word', () {

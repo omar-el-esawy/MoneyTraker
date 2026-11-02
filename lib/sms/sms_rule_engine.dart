@@ -53,9 +53,9 @@ class SmsRuleEngine {
     var bestPos = 1 << 30;
     var bestLength = 0;
     for (final word in words) {
-      final hit = locateText(body, word.word);
+      final hit = locateRule(body, word.pattern, word.word);
       if (hit == null) continue;
-      final length = word.word.trim().length;
+      final length = word.pattern?.words.length ?? word.word.trim().length;
       final better =
           length > bestLength || (length == bestLength && hit.start < bestPos);
       if (!better) continue;
@@ -93,16 +93,39 @@ class SmsRuleEngine {
   ) {
     final hits = <({SmsCategoryRule rule, int pos, int length})>[];
     for (final rule in rules) {
-      final hit = locateText(body, rule.word);
+      final hit = locateRule(body, rule.pattern, rule.word);
       if (hit == null) continue;
-      hits.add((rule: rule, pos: hit.start, length: rule.word.trim().length));
+      hits.add((
+        rule: rule,
+        pos: hit.start,
+        length: rule.pattern?.words.length ?? rule.word.trim().length,
+      ));
     }
+
     hits.sort((a, b) {
       final byLength = b.length.compareTo(a.length);
       if (byLength != 0) return byLength;
       return a.pos.compareTo(b.pos);
     });
     return [for (final hit in hits) hit.rule];
+  }
+
+  static ({int start, int end})? locateRule(
+    String body,
+    SmsRulePattern? pattern,
+    String legacyWord,
+  ) {
+    if (pattern == null) return locateText(body, legacyWord);
+    final tokens = tokenize(body);
+    if (!pattern.isValid || tokens.length != pattern.tokenCount) return null;
+    for (final selected in pattern.words) {
+      if (selected.index >= tokens.length) return null;
+      final actual = normalizeWord(tokens[selected.index].text);
+      if (actual.toLowerCase() != selected.word.trim().toLowerCase()) return null;
+    }
+    final first = pattern.words.map((word) => word.index).reduce((a, b) => a < b ? a : b);
+    final last = pattern.words.map((word) => word.index).reduce((a, b) => a > b ? a : b);
+    return (start: tokens[first].start, end: tokens[last].end);
   }
 
   static SmsRuleContext contextFor(
@@ -172,26 +195,12 @@ class SmsRuleEngine {
 
   static String? extract(String body, SmsReadRule rule) {
     if (rule.prefix.isEmpty && rule.suffix.isEmpty) return null;
-    final both = RegExp(
+    if (rule.prefix.isEmpty || rule.suffix.isEmpty) return null;
+    final pattern = RegExp(
       '${_flex(rule.prefix)}\\s*($_capture)\\s*${_flex(rule.suffix)}',
       caseSensitive: false,
     );
-    final bothMatch = both.firstMatch(body)?.group(1);
-    if (bothMatch != null) return bothMatch;
-    if (rule.prefix.isNotEmpty) {
-      final prefixMatch = RegExp(
-        '${_flex(rule.prefix)}\\s*($_capture)',
-        caseSensitive: false,
-      ).firstMatch(body)?.group(1);
-      if (prefixMatch != null) return prefixMatch;
-    }
-    if (rule.suffix.isNotEmpty) {
-      return RegExp(
-        '($_capture)\\s*${_flex(rule.suffix)}',
-        caseSensitive: false,
-      ).firstMatch(body)?.group(1);
-    }
-    return null;
+    return pattern.firstMatch(body)?.group(1);
   }
 
   static double? parseAmount(String raw) {
@@ -304,7 +313,8 @@ class SmsRuleEngine {
     final parts = [
       for (final rule in rules.where((item) => item.field == SmsField.amount))
         '${rule.prefix}|${rule.suffix}|${rule.typeHint}',
-      for (final word in typeWords) '${word.word}:${word.typeHint}',
+      for (final word in typeWords)
+        '${word.pattern?.key ?? word.word}:${word.typeHint}',
     ];
     return parts.join(';');
   }
@@ -332,7 +342,7 @@ class SmsRuleEngine {
     }
     final buffer = StringBuffer();
     for (final word in typeWords) {
-      buffer.write(word.word);
+      buffer.write(word.pattern?.display ?? word.word);
     }
     return _letterCount(buffer.toString());
   }
