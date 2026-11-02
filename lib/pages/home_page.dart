@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:money_traker/constants/app_constants.dart';
 import 'package:money_traker/model/mission.dart';
@@ -76,6 +77,37 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (mounted) setState(() {});
   }
 
+  List<MoneySource> _webPreviewSources() {
+    const names = [
+      'Cash',
+      'Bank',
+      'Wallet',
+      'Savings',
+      'Salary',
+      'Emergency',
+      'Travel',
+      'Family',
+      'Vodafone Cash',
+      'Instapay',
+      'USD',
+      'Gold',
+      'Office',
+      'Side work',
+      'Goals',
+    ];
+    return [
+      for (var i = 0; i < names.length; i++)
+        MoneySource(id: i + 1, name: names[i], amount: 800 + (i * 350)),
+    ];
+  }
+
+  Widget _notificationBell() {
+    return NotificationBell(
+      unreadCount: InboxStore.instance.unreadCount,
+      onPressed: _openNotifications,
+    );
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) return;
@@ -113,8 +145,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
       final loadedSources = await _storage.getMoneySources();
       if (loadedSources.isEmpty) {
-        // No static/demo data: start with an empty state.
-        _sources = [];
+        // Web preview only. Mobile still starts empty.
+        _sources = kIsWeb ? _webPreviewSources() : [];
       } else {
         _sources = loadedSources;
       }
@@ -132,6 +164,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     } catch (e, stack) {
       // Use debugPrint for safer logging in production builds.
       debugPrint('Error in _initData: $e\n$stack');
+      if (kIsWeb && _sources.isEmpty) {
+        _sources = _webPreviewSources();
+      }
     }
     if (!mounted) return;
     setState(() {
@@ -632,7 +667,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       final updated = await TransactionRepository.instance.getAll();
       final fresh = await InboxStore.instance.recordBankArrivals(
         updated,
-        baselineIds: {for (final transaction in before) if (transaction.id != null) transaction.id!},
+        baselineIds: {
+          for (final transaction in before)
+            if (transaction.id != null) transaction.id!,
+        },
       );
       final sources = await _storage.getMoneySources();
       final history = await _storage.getTotalMoneyDays();
@@ -681,20 +719,21 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           for (var s in _sources.where((s) => s.id != null)) s.name: s.id!,
         },
         onAddSource: _addMoneySource,
-        onEditSource: (name, newName, newAmount, {DateTime? effectiveDate}) async {
-          final source = _sources.firstWhere(
-            (s) => s.name == name,
-            orElse: () => MoneySource.create(name: '', amount: 0.0),
-          );
-          if (source.id != null) {
-            await _editMoneySource(
-              source.id!,
-              newName,
-              newAmount,
-              effectiveDate: effectiveDate,
-            );
-          }
-        },
+        onEditSource:
+            (name, newName, newAmount, {DateTime? effectiveDate}) async {
+              final source = _sources.firstWhere(
+                (s) => s.name == name,
+                orElse: () => MoneySource.create(name: '', amount: 0.0),
+              );
+              if (source.id != null) {
+                await _editMoneySource(
+                  source.id!,
+                  newName,
+                  newAmount,
+                  effectiveDate: effectiveDate,
+                );
+              }
+            },
         onDeleteSource: (name) async {
           final source = _sources.firstWhere(
             (s) => s.name == name,
@@ -736,17 +775,23 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             _transferBetweenSources(from: from, to: to, amount: amount),
         mission: _mission,
         onAddMission: _addMission,
-        headerAction:
-            _selectedIndex == 0
-                ? NotificationBell(
-                  unreadCount: InboxStore.instance.unreadCount,
-                  onPressed: _openNotifications,
-                )
-                : null,
+        headerAction: _notificationBell(),
       ),
-      HistoryPage(historyDays: _historyDays, showAmounts: _showAmounts),
-      InsightsPage(showAmounts: _showAmounts, dataRevision: _insightsRevision),
-      SettingsPage(onDataImported: _reloadAllData, onReplayTour: _startTour),
+      HistoryPage(
+        historyDays: _historyDays,
+        showAmounts: _showAmounts,
+        headerAction: _notificationBell(),
+      ),
+      InsightsPage(
+        showAmounts: _showAmounts,
+        dataRevision: _insightsRevision,
+        headerAction: _notificationBell(),
+      ),
+      SettingsPage(
+        onDataImported: _reloadAllData,
+        onReplayTour: _startTour,
+        headerAction: _notificationBell(),
+      ),
     ];
 
     return AppTourScope(
@@ -754,21 +799,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       child: Stack(
         children: [
           Scaffold(
-            body: SafeArea(
-              child: Column(
-                children: [
-                  if (_selectedIndex != 0)
-                    Align(
-                      alignment: AlignmentDirectional.centerEnd,
-                      child: NotificationBell(
-                        unreadCount: InboxStore.instance.unreadCount,
-                        onPressed: _openNotifications,
-                      ),
-                    ),
-                  Expanded(child: pages[_selectedIndex]),
-                ],
-              ),
-            ),
+            body: SafeArea(child: pages[_selectedIndex]),
             bottomNavigationBar: SafeArea(
               minimum: const EdgeInsets.fromLTRB(12, 0, 12, 10),
               child: Container(

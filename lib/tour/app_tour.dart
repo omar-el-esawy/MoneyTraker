@@ -95,16 +95,15 @@ class AppTourSteps {
           tab: totalTab,
           title: 'مصدر الفلوس',
           body:
-              'دي خانة مصدر زي الكاش أو البنك. اضغطها عشان تزود أو تنقص أو تحوّل أو تشوف السجل، واسحبها لليسار عشان تمسحها.',
+              'دي خانة مصدر زي الكاش أو البنك. الأيقونات الصغيرة جنبها تزود أو تنقص أو تحوّل على طول، والضغط على الخانة يفتح السجل والتعديل، واسحبها لليسار عشان تمسحها.',
         ),
       AppTourStep(
         target: anchors.addSource,
         tab: totalTab,
         title: 'إضافة مصدر',
-        body:
-            hasSources
-                ? 'الزرار ده يضيف مصدر جديد باسم ومبلغ. تقدر تسجل الحركة بتاريخ أقدم لو فاتتك.'
-                : 'لسه مفيش مصادر. الزرار ده يضيف أول مصدر، زي كاش أو بنك. بعد كده هتقدر تضغط الخانة عشان تزود أو تنقص أو تحوّل.',
+        body: hasSources
+            ? 'الزرار العائم ده يضيف مصدر جديد باسم ومبلغ. التلميح جنبه مكتوب Add money، وتقدر تسجل الحركة بتاريخ أقدم لو فاتتك.'
+            : 'لسه مفيش مصادر. الزرار العائم ده، اللي جنبه Add money، يضيف أول مصدر زي كاش أو بنك. بعد كده الأيقونات على الخانة تزود أو تنقص أو تحوّل.',
       ),
       AppTourStep(
         target: anchors.bottomNav,
@@ -328,8 +327,9 @@ class _AppTourOverlayState extends State<AppTourOverlay>
 
   @override
   Widget build(BuildContext context) {
-    final progress =
-        widget.total == 0 ? 0.0 : (widget.index + 1) / widget.total;
+    final progress = widget.total == 0
+        ? 0.0
+        : (widget.index + 1) / widget.total;
 
     return PopScope(
       canPop: false,

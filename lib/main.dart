@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:money_traker/pages/app_update_prompt.dart';
 import 'package:money_traker/pages/splash_screen.dart';
@@ -12,7 +13,9 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await NotificationService.instance.initialize(navigatorKey: navigatorKey);
+  if (!kIsWeb) {
+    await NotificationService.instance.initialize(navigatorKey: navigatorKey);
+  }
   runApp(const MyApp());
 }
 

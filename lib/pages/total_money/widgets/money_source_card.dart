@@ -8,6 +8,9 @@ class MoneySourceCard extends StatelessWidget {
   final bool showAmount;
   final void Function(String, double) onEdit;
   final VoidCallback onDelete;
+  final VoidCallback onAdd;
+  final VoidCallback onSubtract;
+  final VoidCallback onTransfer;
 
   const MoneySourceCard({
     super.key,
@@ -16,26 +19,28 @@ class MoneySourceCard extends StatelessWidget {
     required this.showAmount,
     required this.onEdit,
     required this.onDelete,
+    required this.onAdd,
+    required this.onSubtract,
+    required this.onTransfer,
   });
 
   Future<void> _showDeleteConfirmationDialog(BuildContext context) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder:
-          (context) => AlertDialog(
-            title: const Text('Delete Money Source'),
-            content: Text('Are you sure you want to delete "$sourceName"?'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('Delete'),
-              ),
-            ],
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Money Source'),
+        content: Text('Are you sure you want to delete "$sourceName"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
           ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
     );
     if (confirmed == true) {
       onDelete();
@@ -65,27 +70,28 @@ class MoneySourceCard extends StatelessWidget {
           ),
         ],
       ),
-      child: GestureDetector(
-        onTap: () => onEdit(sourceName, amount),
-        child: Container(
-          height: cardHeight,
-          margin: const EdgeInsets.symmetric(vertical: 4),
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFFE8ECE8)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.04),
-                blurRadius: 4,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Row(
-            children: [
-              Expanded(
+      child: Container(
+        height: cardHeight,
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsetsDirectional.only(start: 16, end: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE8ECE8)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => onEdit(sourceName, amount),
                 child: Text.rich(
                   TextSpan(
                     style: style,
@@ -106,12 +112,67 @@ class MoneySourceCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              const Icon(
-                Icons.chevron_right,
-                size: 20,
-                color: Color(0xFF9CA3AF),
-              ),
-            ],
+            ),
+            _SourceActionIcon(
+              tooltip: 'Add',
+              icon: Icons.add,
+              color: const Color(0xFF1B5E20),
+              background: const Color(0xFFE8F5E9),
+              onPressed: onAdd,
+            ),
+            _SourceActionIcon(
+              tooltip: 'Subtract',
+              icon: Icons.remove,
+              color: const Color(0xFFC62828),
+              background: const Color(0xFFFFEBEE),
+              onPressed: onSubtract,
+            ),
+            _SourceActionIcon(
+              tooltip: 'Transfer',
+              icon: Icons.swap_horiz,
+              color: const Color(0xFF1565C0),
+              background: const Color(0xFFE3F2FD),
+              onPressed: onTransfer,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SourceActionIcon extends StatelessWidget {
+  final String tooltip;
+  final IconData icon;
+  final Color color;
+  final Color background;
+  final VoidCallback onPressed;
+
+  const _SourceActionIcon({
+    required this.tooltip,
+    required this.icon,
+    required this.color,
+    required this.background,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsetsDirectional.only(start: 4),
+      child: Material(
+        color: background,
+        shape: const CircleBorder(),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onPressed,
+          child: Tooltip(
+            message: tooltip,
+            child: SizedBox(
+              width: 28,
+              height: 28,
+              child: Icon(icon, size: 16, color: color),
+            ),
           ),
         ),
       ),

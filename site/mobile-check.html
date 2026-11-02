@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<meta charset="utf-8" />
+<pre id="out">loading</pre>
+<iframe class="frame" data-width="320" style="width:320px;height:900px;border:0" src="index.html"></iframe>
+<iframe class="frame" data-width="390" style="width:390px;height:900px;border:0" src="index.html"></iframe>
+<iframe class="frame" data-width="768" style="width:768px;height:900px;border:0" src="index.html"></iframe>
+<script>
+  const frames = [...document.querySelectorAll(".frame")];
+  let left = frames.length;
+  const lines = [];
+  for (const frame of frames) {
+    frame.addEventListener("load", () => {
+      const doc = frame.contentDocument.documentElement;
+      const pick = (selector) => {
+        const el = frame.contentDocument.querySelector(selector);
+        const rect = el.getBoundingClientRect();
+        return (
+          selector +
+          " l=" + Math.round(rect.left) +
+          " r=" + Math.round(rect.right) +
+          " w=" + Math.round(rect.width)
+        );
+      };
+      lines.push(
+        frame.dataset.width +
+          " client=" + doc.clientWidth +
+          " scroll=" + doc.scrollWidth +
+          " | " + pick(".brand") +
+          " | " + pick(".hero-art") +
+          " | " + pick("h1") +
+          " | " + pick(".button")
+      );
+      left -= 1;
+      if (left === 0) document.getElementById("out").textContent = lines.join("\n");
+    });
+  }
+</script>

@@ -20,8 +20,14 @@ import 'package:money_traker/tour/app_tour.dart';
 class SettingsPage extends StatefulWidget {
   final Future<void> Function()? onDataImported;
   final VoidCallback? onReplayTour;
+  final Widget? headerAction;
 
-  const SettingsPage({super.key, this.onDataImported, this.onReplayTour});
+  const SettingsPage({
+    super.key,
+    this.onDataImported,
+    this.onReplayTour,
+    this.headerAction,
+  });
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -228,6 +234,7 @@ class _SettingsPageState extends State<SettingsPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Settings'),
+        actions: [if (widget.headerAction != null) widget.headerAction!],
         bottom: _busy
             ? const PreferredSize(
                 preferredSize: Size.fromHeight(3),

@@ -58,8 +58,14 @@ const _cardBorder = Color(0xFFE6E8EC);
 class InsightsPage extends StatefulWidget {
   final bool showAmounts;
   final int dataRevision;
+  final Widget? headerAction;
 
-  const InsightsPage({super.key, this.showAmounts = true, this.dataRevision = 0});
+  const InsightsPage({
+    super.key,
+    this.showAmounts = true,
+    this.dataRevision = 0,
+    this.headerAction,
+  });
 
   @override
   State<InsightsPage> createState() => _InsightsPageState();
@@ -119,10 +125,9 @@ class _InsightsPageState extends State<InsightsPage> {
         return DateTimeRange(start: s, end: s.add(const Duration(days: 7)));
       case InsightsRange.month:
         final s = _startOfMonth(a);
-        final e =
-            (s.month == 12)
-                ? DateTime(s.year + 1, 1, 1)
-                : DateTime(s.year, s.month + 1, 1);
+        final e = (s.month == 12)
+            ? DateTime(s.year + 1, 1, 1)
+            : DateTime(s.year, s.month + 1, 1);
         return DateTimeRange(start: s, end: e);
     }
   }
@@ -279,10 +284,9 @@ class _InsightsPageState extends State<InsightsPage> {
       limit: 1,
     );
 
-    double? prevTotal =
-        prevDayRows.isNotEmpty
-            ? (prevDayRows.first['totalAmount'] as num).toDouble()
-            : null;
+    double? prevTotal = prevDayRows.isNotEmpty
+        ? (prevDayRows.first['totalAmount'] as num).toDouble()
+        : null;
 
     double totalIncomeDelta = 0;
     double totalExpenseDelta = 0;
@@ -330,13 +334,17 @@ class _InsightsPageState extends State<InsightsPage> {
     final taggedIncome = sumMap(income);
     final taggedExpense = sumMap(expense);
 
-    income['Others'] = (income['Others'] ?? 0) + uncategorizedGap(totalIncomeDelta, taggedIncome);
-    expense['Others'] = (expense['Others'] ?? 0) + uncategorizedGap(totalExpenseDelta, taggedExpense);
+    income['Others'] =
+        (income['Others'] ?? 0) +
+        uncategorizedGap(totalIncomeDelta, taggedIncome);
+    expense['Others'] =
+        (expense['Others'] ?? 0) +
+        uncategorizedGap(totalExpenseDelta, taggedExpense);
 
     // sort maps by value desc but keep Others present
     Map<String, double> sortByValueDesc(Map<String, double> m) {
-      final entries =
-          m.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+      final entries = m.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
       return {for (final e in entries) e.key: e.value};
     }
 
@@ -406,26 +414,25 @@ class _InsightsPageState extends State<InsightsPage> {
 
     final confirmed = await showDialog<bool>(
       context: context,
-      builder:
-          (ctx) => AlertDialog(
-            title: const Text('Delete tag'),
-            content: Text(
-              'Delete "$normalized"? This will remove it from all days in your history.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(false),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(true),
-                style: TextButton.styleFrom(
-                  foregroundColor: const Color(0xFFC62828),
-                ),
-                child: const Text('Delete'),
-              ),
-            ],
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete tag'),
+        content: Text(
+          'Delete "$normalized"? This will remove it from all days in your history.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
           ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFFC62828),
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
     );
 
     if (confirmed != true) return;
@@ -475,26 +482,25 @@ class _InsightsPageState extends State<InsightsPage> {
     final controller = TextEditingController(text: normalized);
     final newName = await showDialog<String>(
       context: context,
-      builder:
-          (ctx) => AlertDialog(
-            title: const Text('Edit category name'),
-            content: TextField(
-              controller: controller,
-              autofocus: true,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: const InputDecoration(labelText: 'Category name'),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
-                child: const Text('Save'),
-              ),
-            ],
+      builder: (ctx) => AlertDialog(
+        title: const Text('Edit category name'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.sentences,
+          decoration: const InputDecoration(labelText: 'Category name'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
           ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
     );
 
     if (newName == null) return;
@@ -593,16 +599,15 @@ class _InsightsPageState extends State<InsightsPage> {
                   decoration: BoxDecoration(
                     color: on ? Colors.white : Colors.transparent,
                     borderRadius: BorderRadius.circular(12),
-                    boxShadow:
-                        on
-                            ? [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.06),
-                                blurRadius: 8,
-                                offset: const Offset(0, 2),
-                              ),
-                            ]
-                            : null,
+                    boxShadow: on
+                        ? [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.06),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ]
+                        : null,
                   ),
                   child: Text(
                     labels[index],
@@ -610,10 +615,9 @@ class _InsightsPageState extends State<InsightsPage> {
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: on ? FontWeight.w700 : FontWeight.w500,
-                      color:
-                          on
-                              ? (selectedColor ?? AppConstants.textPrimary)
-                              : AppConstants.textSecondary,
+                      color: on
+                          ? (selectedColor ?? AppConstants.textPrimary)
+                          : AppConstants.textSecondary,
                     ),
                   ),
                 ),
@@ -645,10 +649,9 @@ class _InsightsPageState extends State<InsightsPage> {
             child: Icon(
               icon,
               size: 22,
-              color:
-                  enabled
-                      ? AppConstants.textPrimary
-                      : AppConstants.textTertiary,
+              color: enabled
+                  ? AppConstants.textPrimary
+                  : AppConstants.textTertiary,
             ),
           ),
         ),
@@ -674,6 +677,7 @@ class _InsightsPageState extends State<InsightsPage> {
               tooltip: 'Choose a date',
               onPressed: _pickAnchorDate,
             ),
+            if (widget.headerAction != null) widget.headerAction!,
           ],
         ),
         const SizedBox(height: 14),
@@ -889,8 +893,9 @@ class _InsightsPageState extends State<InsightsPage> {
     if (p == null) return const SizedBox.shrink();
 
     final spentMode = p.goal.direction == GoalDirection.spendingLimit;
-    final accent =
-        spentMode ? const Color(0xFFC62828) : AppConstants.primaryColor;
+    final accent = spentMode
+        ? const Color(0xFFC62828)
+        : AppConstants.primaryColor;
     final remaining = p.goal.targetAmount - p.progress;
     final exceeded = remaining < 0;
     final pct = p.percent.isNaN ? 0.0 : p.percent.clamp(0.0, 1.0);
@@ -907,112 +912,111 @@ class _InsightsPageState extends State<InsightsPage> {
           await _loadMainGoal();
         },
         child: Container(
-      padding: const EdgeInsets.all(16),
-      decoration: _cardDecoration(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+          padding: const EdgeInsets.all(16),
+          decoration: _cardDecoration(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color:
-                      spentMode
+              Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: spentMode
                           ? const Color(0xFFFFEBEE)
                           : AppConstants.primarySurface,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  spentMode ? Icons.trending_down_rounded : Icons.flag_rounded,
-                  size: 18,
-                  color: accent,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      p.goal.name,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      spentMode ? 'Spending limit' : 'Saving goal',
-                      style: Theme.of(context).textTheme.bodySmall,
+                    child: Icon(
+                      spentMode
+                          ? Icons.trending_down_rounded
+                          : Icons.flag_rounded,
+                      size: 18,
+                      color: accent,
                     ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: accent.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: ObscurableAmount(
-                  amount: '${(pct * 100).round()}%',
-                  visible: widget.showAmounts,
-                  style: TextStyle(
-                    color:
-                        widget.showAmounts ? accent : const Color(0xFF6B7280),
-                    fontWeight: FontWeight.w800,
-                    fontSize: 12,
                   ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          p.goal.name,
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          spentMode ? 'Spending limit' : 'Saving goal',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: accent.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: ObscurableAmount(
+                      amount: '${(pct * 100).round()}%',
+                      visible: widget.showAmounts,
+                      style: TextStyle(
+                        color: widget.showAmounts
+                            ? accent
+                            : const Color(0xFF6B7280),
+                        fontWeight: FontWeight.w800,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(99),
+                child: LinearProgressIndicator(
+                  value: widget.showAmounts ? pct : 0,
+                  minHeight: 8,
+                  backgroundColor: accent.withValues(alpha: 0.12),
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    widget.showAmounts ? accent : const Color(0xFFE5E7EB),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              ObscurableAmount(
+                amount:
+                    '$verb ${_money.format(p.progress)} of ${_money.format(p.goal.targetAmount)}',
+                visible: widget.showAmounts,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: AppConstants.textPrimary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 2),
+              ObscurableAmount(
+                amount: exceeded
+                    ? 'Over by ${_money.format(remaining.abs())}'
+                    : '${_money.format(remaining)} left',
+                visible: widget.showAmounts,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: widget.showAmounts && exceeded
+                      ? const Color(0xFFC62828)
+                      : AppConstants.textSecondary,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 14),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(99),
-            child: LinearProgressIndicator(
-              value: widget.showAmounts ? pct : 0,
-              minHeight: 8,
-              backgroundColor: accent.withValues(alpha: 0.12),
-              valueColor: AlwaysStoppedAnimation<Color>(
-                widget.showAmounts ? accent : const Color(0xFFE5E7EB),
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          ObscurableAmount(
-            amount:
-                '$verb ${_money.format(p.progress)} of ${_money.format(p.goal.targetAmount)}',
-            visible: widget.showAmounts,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: AppConstants.textPrimary,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 2),
-          ObscurableAmount(
-            amount:
-                exceeded
-                    ? 'Over by ${_money.format(remaining.abs())}'
-                    : '${_money.format(remaining)} left',
-            visible: widget.showAmounts,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color:
-                  widget.showAmounts && exceeded
-                      ? const Color(0xFFC62828)
-                      : AppConstants.textSecondary,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
         ),
       ),
     );
@@ -1024,8 +1028,9 @@ class _InsightsPageState extends State<InsightsPage> {
     required bool income,
     required int touched,
   }) {
-    final focus =
-        touched >= 0 && touched < entries.length ? entries[touched] : null;
+    final focus = touched >= 0 && touched < entries.length
+        ? entries[touched]
+        : null;
     final centerAmount = focus?.value ?? total;
     final centerLabel = focus?.key ?? (income ? 'Income' : 'Expenses');
 
@@ -1051,25 +1056,24 @@ class _InsightsPageState extends State<InsightsPage> {
                   setState(() => _touchedIndex = next);
                 },
               ),
-              sections:
-                  widget.showAmounts
-                      ? [
-                        for (var i = 0; i < entries.length; i++)
-                          PieChartSectionData(
-                            value: entries[i].value,
-                            color: _sliceColor(entries, i, income),
-                            radius: i == touched ? 36 : 30,
-                            showTitle: false,
-                          ),
-                      ]
-                      : [
+              sections: widget.showAmounts
+                  ? [
+                      for (var i = 0; i < entries.length; i++)
                         PieChartSectionData(
-                          value: 1,
-                          color: const Color(0xFFE5E7EB),
-                          radius: 30,
+                          value: entries[i].value,
+                          color: _sliceColor(entries, i, income),
+                          radius: i == touched ? 36 : 30,
                           showTitle: false,
                         ),
-                      ],
+                    ]
+                  : [
+                      PieChartSectionData(
+                        value: 1,
+                        color: const Color(0xFFE5E7EB),
+                        radius: 30,
+                        showTitle: false,
+                      ),
+                    ],
             ),
           ),
           SizedBox(
@@ -1271,34 +1275,26 @@ class _InsightsPageState extends State<InsightsPage> {
               SizedBox(
                 width: 48,
                 height: 48,
-                child:
-                    others
-                        ? null
-                        : PopupMenuButton<String>(
-                          tooltip: 'Edit or delete',
-                          padding: EdgeInsets.zero,
-                          icon: const Icon(
-                            Icons.more_horiz_rounded,
-                            color: AppConstants.textTertiary,
-                          ),
-                          onSelected: (value) {
-                            if (value == 'rename')
-                              _renameTagByName(entry.key, type);
-                            if (value == 'delete')
-                              _deleteTagByName(entry.key, type);
-                          },
-                          itemBuilder:
-                              (context) => const [
-                                PopupMenuItem(
-                                  value: 'rename',
-                                  child: Text('Rename'),
-                                ),
-                                PopupMenuItem(
-                                  value: 'delete',
-                                  child: Text('Delete'),
-                                ),
-                              ],
+                child: others
+                    ? null
+                    : PopupMenuButton<String>(
+                        tooltip: 'Edit or delete',
+                        padding: EdgeInsets.zero,
+                        icon: const Icon(
+                          Icons.more_horiz_rounded,
+                          color: AppConstants.textTertiary,
                         ),
+                        onSelected: (value) {
+                          if (value == 'rename')
+                            _renameTagByName(entry.key, type);
+                          if (value == 'delete')
+                            _deleteTagByName(entry.key, type);
+                        },
+                        itemBuilder: (context) => const [
+                          PopupMenuItem(value: 'rename', child: Text('Rename')),
+                          PopupMenuItem(value: 'delete', child: Text('Delete')),
+                        ],
+                      ),
               ),
             ],
           ),
@@ -1314,10 +1310,9 @@ class _InsightsPageState extends State<InsightsPage> {
     final total = _sum(source);
     final type = income ? TagType.income : TagType.expense;
     final accent = income ? AppConstants.primaryColor : const Color(0xFFC62828);
-    final touched =
-        _touchedIndex >= 0 && _touchedIndex < entries.length
-            ? _touchedIndex
-            : -1;
+    final touched = _touchedIndex >= 0 && _touchedIndex < entries.length
+        ? _touchedIndex
+        : -1;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1413,17 +1408,16 @@ class _InsightsPageState extends State<InsightsPage> {
               ),
             KeyedSubtree(
               key: tour?.insightsSummary,
-              child:
-                  !_hasLoaded
-                      ? const SizedBox(
-                        height: 140,
-                        child: Center(
-                          child: CircularProgressIndicator(
-                            color: AppConstants.primaryColor,
-                          ),
+              child: !_hasLoaded
+                  ? const SizedBox(
+                      height: 140,
+                      child: Center(
+                        child: CircularProgressIndicator(
+                          color: AppConstants.primaryColor,
                         ),
-                      )
-                      : _buildSummary(context),
+                      ),
+                    )
+                  : _buildSummary(context),
             ),
             if (_hasLoaded) ...[
               const SizedBox(height: 14),

@@ -16,11 +16,13 @@ import 'package:money_traker/tour/app_tour.dart';
 class HistoryPage extends StatefulWidget {
   final List<TotalMoneyDay> historyDays;
   final bool showAmounts;
+  final Widget? headerAction;
 
   const HistoryPage({
     super.key,
     required this.historyDays,
     this.showAmounts = true,
+    this.headerAction,
   });
 
   @override
@@ -128,22 +130,20 @@ class _HistoryPageState extends State<HistoryPage> {
 
     // For the very first day there is no previous snapshot, so use its full
     // total as the baseline delta to enable category tagging.
-    final delta =
-        sortedIndex == 0
-            ? day.totalAmount
-            : dayDelta(_historyDays, sortedIndex);
+    final delta = sortedIndex == 0
+        ? day.totalAmount
+        : dayDelta(_historyDays, sortedIndex);
 
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
-      builder:
-          (ctx) => DayDeltaTaggingSheet(
-            dayId: day.id!,
-            delta: delta,
-            entryDate: day.date,
-            showAmounts: widget.showAmounts,
-          ),
+      builder: (ctx) => DayDeltaTaggingSheet(
+        dayId: day.id!,
+        delta: delta,
+        entryDate: day.date,
+        showAmounts: widget.showAmounts,
+      ),
     );
 
     await _loadDeltaSummaries();
@@ -186,12 +186,11 @@ class _HistoryPageState extends State<HistoryPage> {
 
       final delta = to.totalAmount - from.totalAmount;
       final sign = delta > 0 ? '+' : '';
-      final Color deltaColor =
-          !widget.showAmounts
-              ? Colors.grey
-              : (delta > 0
-                  ? AppConstants.accentColor
-                  : (delta < 0 ? AppConstants.errorColor : Colors.grey));
+      final Color deltaColor = !widget.showAmounts
+          ? Colors.grey
+          : (delta > 0
+                ? AppConstants.accentColor
+                : (delta < 0 ? AppConstants.errorColor : Colors.grey));
 
       if (!mounted) return;
 
@@ -276,24 +275,23 @@ class _HistoryPageState extends State<HistoryPage> {
                           children: [
                             Text(
                               'Δ Difference',
-                              style: Theme.of(
-                                ctx,
-                              ).textTheme.labelLarge?.copyWith(
-                                color:
-                                    Theme.of(ctx).colorScheme.onSurfaceVariant,
-                              ),
+                              style: Theme.of(ctx).textTheme.labelLarge
+                                  ?.copyWith(
+                                    color: Theme.of(
+                                      ctx,
+                                    ).colorScheme.onSurfaceVariant,
+                                  ),
                             ),
                             const SizedBox(height: 2),
                             ObscurableAmount(
                               amount: '$sign${delta.toStringAsFixed(2)}',
                               visible: widget.showAmounts,
                               textAlign: TextAlign.end,
-                              style: Theme.of(
-                                ctx,
-                              ).textTheme.headlineSmall?.copyWith(
-                                color: deltaColor,
-                                fontWeight: FontWeight.w800,
-                              ),
+                              style: Theme.of(ctx).textTheme.headlineSmall
+                                  ?.copyWith(
+                                    color: deltaColor,
+                                    fontWeight: FontWeight.w800,
+                                  ),
                             ),
                           ],
                         ),
@@ -364,23 +362,21 @@ class _HistoryPageState extends State<HistoryPage> {
                     ),
                     KeyedSubtree(
                       key: tour?.compareDays,
-                      child:
-                          _compareMode
-                              ? TextButton.icon(
-                                onPressed: _cancelCompare,
-                                icon: const Icon(Icons.close),
-                                label: const Text('Cancel'),
-                              )
-                              : IconButton(
-                                tooltip:
-                                    canCompare
-                                        ? 'Compare days'
-                                        : 'Need at least 2 days',
-                                onPressed:
-                                    canCompare ? _toggleCompareMode : null,
-                                icon: const Icon(Icons.compare_arrows),
-                              ),
+                      child: _compareMode
+                          ? TextButton.icon(
+                              onPressed: _cancelCompare,
+                              icon: const Icon(Icons.close),
+                              label: const Text('Cancel'),
+                            )
+                          : IconButton(
+                              tooltip: canCompare
+                                  ? 'Compare days'
+                                  : 'Need at least 2 days',
+                              onPressed: canCompare ? _toggleCompareMode : null,
+                              icon: const Icon(Icons.compare_arrows),
+                            ),
                     ),
+                    if (widget.headerAction != null) widget.headerAction!,
                   ],
                 ),
               ),
@@ -435,15 +431,15 @@ class _HistoryPageState extends State<HistoryPage> {
 
                   final delta = dayDelta(_historyDays, sortedIndex);
                   final bool showDelta = !_compareMode && sortedIndex > 0;
-                  final summary =
-                      item.id == null ? null : _deltaSummariesByDayId[item.id!];
+                  final summary = item.id == null
+                      ? null
+                      : _deltaSummariesByDayId[item.id!];
                   final hasCategories =
                       summary != null && summary.hasAnyCategory;
 
-                  final tileIconColor =
-                      isSelected
-                          ? const Color(0xFF2563EB)
-                          : _cardOnSurfaceMuted(context);
+                  final tileIconColor = isSelected
+                      ? const Color(0xFF2563EB)
+                      : _cardOnSurfaceMuted(context);
 
                   final card = AnimatedContainer(
                     duration: const Duration(milliseconds: 180),
@@ -451,16 +447,14 @@ class _HistoryPageState extends State<HistoryPage> {
                     margin: const EdgeInsets.only(bottom: 10),
                     child: InkWell(
                       borderRadius: BorderRadius.circular(18),
-                      onTap:
-                          () => _handleHistoryTap(
-                            sortedIndex: sortedIndex,
-                            displayIndex: index,
-                            item: item,
-                          ),
-                      onLongPress:
-                          _compareMode
-                              ? null
-                              : () => _editNote(context, sortedIndex, item),
+                      onTap: () => _handleHistoryTap(
+                        sortedIndex: sortedIndex,
+                        displayIndex: index,
+                        item: item,
+                      ),
+                      onLongPress: _compareMode
+                          ? null
+                          : () => _editNote(context, sortedIndex, item),
                       child: Container(
                         padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
                         decoration: BoxDecoration(
@@ -494,8 +488,8 @@ class _HistoryPageState extends State<HistoryPage> {
                                   child: Icon(
                                     _compareMode
                                         ? (isSelected
-                                            ? Icons.check_circle
-                                            : Icons.circle_outlined)
+                                              ? Icons.check_circle
+                                              : Icons.circle_outlined)
                                         : Icons.calendar_today,
                                     size: 18,
                                     color: tileIconColor,
@@ -509,21 +503,25 @@ class _HistoryPageState extends State<HistoryPage> {
                                     children: [
                                       Text(
                                         dateTitle,
-                                        style: Theme.of(
-                                          context,
-                                        ).textTheme.titleMedium?.copyWith(
-                                          color: _cardOnSurface(context),
-                                          fontWeight: FontWeight.w800,
-                                        ),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleMedium
+                                            ?.copyWith(
+                                              color: _cardOnSurface(context),
+                                              fontWeight: FontWeight.w800,
+                                            ),
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
                                         timeText,
-                                        style: Theme.of(
-                                          context,
-                                        ).textTheme.bodySmall?.copyWith(
-                                          color: _cardOnSurfaceMuted(context),
-                                        ),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
+                                              color: _cardOnSurfaceMuted(
+                                                context,
+                                              ),
+                                            ),
                                       ),
                                     ],
                                   ),
@@ -542,24 +540,24 @@ class _HistoryPageState extends State<HistoryPage> {
                               children: [
                                 Text(
                                   'Total',
-                                  style: Theme.of(
-                                    context,
-                                  ).textTheme.bodyMedium?.copyWith(
-                                    color: _cardOnSurfaceMuted(context),
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                                  style: Theme.of(context).textTheme.bodyMedium
+                                      ?.copyWith(
+                                        color: _cardOnSurfaceMuted(context),
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                 ),
                                 const Spacer(),
                                 ObscurableAmount(
                                   amount: item.totalAmount.toStringAsFixed(2),
                                   visible: widget.showAmounts,
                                   textAlign: TextAlign.end,
-                                  style: Theme.of(
-                                    context,
-                                  ).textTheme.headlineSmall?.copyWith(
-                                    color: amountColor,
-                                    fontWeight: FontWeight.w900,
-                                  ),
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .headlineSmall
+                                      ?.copyWith(
+                                        color: amountColor,
+                                        fontWeight: FontWeight.w900,
+                                      ),
                                 ),
                               ],
                             ),
@@ -594,11 +592,12 @@ class _HistoryPageState extends State<HistoryPage> {
                                         item.note!.trim(),
                                         maxLines: 2,
                                         overflow: TextOverflow.ellipsis,
-                                        style: Theme.of(
-                                          context,
-                                        ).textTheme.bodySmall?.copyWith(
-                                          color: _cardOnSurface(context),
-                                        ),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
+                                              color: _cardOnSurface(context),
+                                            ),
                                       ),
                                     ),
                                   ],
@@ -617,25 +616,24 @@ class _HistoryPageState extends State<HistoryPage> {
                                         vertical: 4,
                                       ),
                                       decoration: BoxDecoration(
-                                        color:
-                                            widget.showAmounts
-                                                ? const Color(0xFFE8F5E9)
-                                                : const Color(0xFFF3F4F6),
+                                        color: widget.showAmounts
+                                            ? const Color(0xFFE8F5E9)
+                                            : const Color(0xFFF3F4F6),
                                         borderRadius: BorderRadius.circular(6),
                                       ),
                                       child: ObscurableAmount(
                                         amount:
                                             '+${summary.totalIncome.toStringAsFixed(2)}',
                                         visible: widget.showAmounts,
-                                        style: Theme.of(
-                                          context,
-                                        ).textTheme.labelSmall?.copyWith(
-                                          color:
-                                              widget.showAmounts
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .labelSmall
+                                            ?.copyWith(
+                                              color: widget.showAmounts
                                                   ? const Color(0xFF1B5E20)
                                                   : const Color(0xFF6B7280),
-                                          fontWeight: FontWeight.w700,
-                                        ),
+                                              fontWeight: FontWeight.w700,
+                                            ),
                                       ),
                                     ),
                                   if (summary.totalIncome > 0 &&
@@ -648,35 +646,35 @@ class _HistoryPageState extends State<HistoryPage> {
                                         vertical: 4,
                                       ),
                                       decoration: BoxDecoration(
-                                        color:
-                                            widget.showAmounts
-                                                ? const Color(0xFFFFEBEE)
-                                                : const Color(0xFFF3F4F6),
+                                        color: widget.showAmounts
+                                            ? const Color(0xFFFFEBEE)
+                                            : const Color(0xFFF3F4F6),
                                         borderRadius: BorderRadius.circular(6),
                                       ),
                                       child: ObscurableAmount(
                                         amount:
                                             '-${summary.totalExpenses.toStringAsFixed(2)}',
                                         visible: widget.showAmounts,
-                                        style: Theme.of(
-                                          context,
-                                        ).textTheme.labelSmall?.copyWith(
-                                          color:
-                                              widget.showAmounts
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .labelSmall
+                                            ?.copyWith(
+                                              color: widget.showAmounts
                                                   ? const Color(0xFFD32F2F)
                                                   : const Color(0xFF6B7280),
-                                          fontWeight: FontWeight.w700,
-                                        ),
+                                              fontWeight: FontWeight.w700,
+                                            ),
                                       ),
                                     ),
                                   const Spacer(),
                                   Text(
                                     '${summary.totalCategories} categories',
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.labelSmall?.copyWith(
-                                      color: _cardOnSurfaceMuted(context),
-                                    ),
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelSmall
+                                        ?.copyWith(
+                                          color: _cardOnSurfaceMuted(context),
+                                        ),
                                   ),
                                 ],
                               ),
@@ -696,15 +694,14 @@ class _HistoryPageState extends State<HistoryPage> {
                                     _compareMode
                                         ? 'Tap to select'
                                         : (hasCategories
-                                            ? 'Tap to edit categories • Long press to edit note'
-                                            : 'Tap to categorize • Long press to edit note'),
+                                              ? 'Tap to edit categories • Long press to edit note'
+                                              : 'Tap to categorize • Long press to edit note'),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.bodySmall?.copyWith(
-                                      color: _cardOnSurfaceMuted(context),
-                                    ),
+                                    style: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(
+                                          color: _cardOnSurfaceMuted(context),
+                                        ),
                                   ),
                                 ),
                               ],

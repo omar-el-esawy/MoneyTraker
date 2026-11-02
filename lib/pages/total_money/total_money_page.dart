@@ -112,7 +112,10 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
     }
   }
 
-  bool _sourceAmountsChanged(Map<String, double> previous, Map<String, double> next) {
+  bool _sourceAmountsChanged(
+    Map<String, double> previous,
+    Map<String, double> next,
+  ) {
     if (previous.length != next.length) return true;
     for (final entry in previous.entries) {
       if (next[entry.key] != entry.value) return true;
@@ -136,12 +139,11 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
 
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder:
-            (_) => SourceHistoryPage(
-              sourceId: sourceId,
-              sourceName: sourceName,
-              showAmounts: widget.showAmounts,
-            ),
+        builder: (_) => SourceHistoryPage(
+          sourceId: sourceId,
+          sourceName: sourceName,
+          showAmounts: widget.showAmounts,
+        ),
       ),
     );
   }
@@ -182,10 +184,9 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
     // Remaining can become negative if exceeded.
     final remaining = p.goal.targetAmount - p.progress;
     final exceeded = remaining < 0;
-    final remainingColor =
-        !widget.showAmounts
-            ? const Color(0xFF6B7280)
-            : (exceeded ? Colors.red : const Color(0xFF6B7280));
+    final remainingColor = !widget.showAmounts
+        ? const Color(0xFF6B7280)
+        : (exceeded ? Colors.red : const Color(0xFF6B7280));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -240,214 +241,201 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
         ),
         SizedBox(
           height: 154,
-          child:
-              _loadingGoals
-                  ? const Center(
-                    child: SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  )
-                  : ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    itemBuilder: (ctx, i) {
-                      if (i == _homeGoals.length) {
-                        return InkWell(
-                          borderRadius: BorderRadius.circular(16),
-                          onTap: _openGoals,
-                          child: Container(
-                            width: 120,
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(
-                                color: const Color(0xFFD0D0D0),
-                              ),
-                            ),
-                            child: const Center(
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.add_circle_outline,
-                                    size: 28,
-                                    color: Color(0xFF9CA3AF),
-                                  ),
-                                  SizedBox(height: 4),
-                                  Text(
-                                    'New Goal',
-                                    style: TextStyle(
-                                      color: Color(0xFF9CA3AF),
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        );
-                      }
-
-                      final p = _homeGoals[i];
-                      final spentMode =
-                          p.goal.direction == GoalDirection.spendingLimit;
-                      final cycleLabel = switch (p.goal.type) {
-                        GoalType.monthly => 'Monthly',
-                        GoalType.repeatingDays =>
-                          '${p.goal.repeatEveryDays ?? 0} days',
-                        GoalType.fixedPeriod => 'Fixed',
-                      };
-                      final accent =
-                          spentMode
-                              ? const Color(0xFFD32F2F)
-                              : const Color(0xFF1B5E20);
-                      final bg =
-                          spentMode
-                              ? const Color(0xFFFFEBEE)
-                              : const Color(0xFFE8F5E9);
-                      final pct = p.percent.clamp(0.0, 1.0);
-                      final completed = p.progress >= p.goal.targetAmount;
-                      final statusLabel =
-                          spentMode
-                              ? (completed ? 'Over limit' : 'On track')
-                              : (completed ? 'Reached' : 'In progress');
-                      final statusColor =
-                          spentMode && completed
-                              ? const Color(0xFFC62828)
-                              : const Color(0xFF2E7D32);
-
+          child: _loadingGoals
+              ? const Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              : ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  itemBuilder: (ctx, i) {
+                    if (i == _homeGoals.length) {
                       return InkWell(
                         borderRadius: BorderRadius.circular(16),
-                        onTap: () async {
-                          await Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => GoalDetailPageView(goal: p.goal),
-                            ),
-                          );
-                          await _loadGoals();
-                        },
+                        onTap: _openGoals,
                         child: Container(
-                          width: 220,
-                          padding: const EdgeInsets.all(16),
+                          width: 120,
                           decoration: BoxDecoration(
-                            color: Colors.white,
                             borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: const Color(0xFFF0F0F0)),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.04),
-                                blurRadius: 10,
-                                offset: const Offset(0, 6),
-                              ),
-                            ],
+                            border: Border.all(color: const Color(0xFFD0D0D0)),
                           ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Container(
-                                    width: 32,
-                                    height: 32,
-                                    decoration: BoxDecoration(
-                                      color: bg,
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: Icon(
-                                      spentMode
-                                          ? Icons.trending_down
-                                          : Icons.flag_outlined,
-                                      size: 16,
-                                      color: accent,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      p.goal.name,
-                                      style: Theme.of(
-                                        context,
-                                      ).textTheme.bodyMedium?.copyWith(
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  Text(
-                                    cycleLabel,
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.labelSmall?.copyWith(
-                                      color: const Color(0xFF9CA3AF),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 12),
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(6),
-                                child: LinearProgressIndicator(
-                                  value: widget.showAmounts ? pct : 0,
-                                  minHeight: 8,
-                                  backgroundColor: const Color(0xFFF0F0F0),
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                    widget.showAmounts
-                                        ? accent
-                                        : const Color(0xFFE5E7EB),
+                          child: const Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.add_circle_outline,
+                                  size: 28,
+                                  color: Color(0xFF9CA3AF),
+                                ),
+                                SizedBox(height: 4),
+                                Text(
+                                  'New Goal',
+                                  style: TextStyle(
+                                    color: Color(0xFF9CA3AF),
+                                    fontWeight: FontWeight.w600,
                                   ),
                                 ),
-                              ),
-                              const SizedBox(height: 8),
-                              Row(
-                                children: [
-                                  ObscurableAmount(
-                                    amount: p.progress.toStringAsFixed(2),
-                                    visible: widget.showAmounts,
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodyMedium
-                                        ?.copyWith(fontWeight: FontWeight.w800),
-                                  ),
-                                  ObscurableAmount(
-                                    amount:
-                                        ' / ${p.goal.targetAmount.toStringAsFixed(2)}',
-                                    visible: widget.showAmounts,
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.bodyMedium?.copyWith(
-                                      color: const Color(0xFF9CA3AF),
-                                    ),
-                                  ),
-                                  const Spacer(),
-                                  Text(
-                                    '${p.daysRemaining}d left',
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.labelSmall?.copyWith(
-                                      color: const Color(0xFF6B7280),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                statusLabel,
-                                style: Theme.of(context).textTheme.labelSmall
-                                    ?.copyWith(
-                                      color: statusColor,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                       );
-                    },
-                    separatorBuilder: (_, __) => const SizedBox(width: 12),
-                    itemCount: _homeGoals.length + 1,
-                  ),
+                    }
+
+                    final p = _homeGoals[i];
+                    final spentMode =
+                        p.goal.direction == GoalDirection.spendingLimit;
+                    final cycleLabel = switch (p.goal.type) {
+                      GoalType.monthly => 'Monthly',
+                      GoalType.repeatingDays =>
+                        '${p.goal.repeatEveryDays ?? 0} days',
+                      GoalType.fixedPeriod => 'Fixed',
+                    };
+                    final accent = spentMode
+                        ? const Color(0xFFD32F2F)
+                        : const Color(0xFF1B5E20);
+                    final bg = spentMode
+                        ? const Color(0xFFFFEBEE)
+                        : const Color(0xFFE8F5E9);
+                    final pct = p.percent.clamp(0.0, 1.0);
+                    final completed = p.progress >= p.goal.targetAmount;
+                    final statusLabel = spentMode
+                        ? (completed ? 'Over limit' : 'On track')
+                        : (completed ? 'Reached' : 'In progress');
+                    final statusColor = spentMode && completed
+                        ? const Color(0xFFC62828)
+                        : const Color(0xFF2E7D32);
+
+                    return InkWell(
+                      borderRadius: BorderRadius.circular(16),
+                      onTap: () async {
+                        await Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => GoalDetailPageView(goal: p.goal),
+                          ),
+                        );
+                        await _loadGoals();
+                      },
+                      child: Container(
+                        width: 220,
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0xFFF0F0F0)),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.04),
+                              blurRadius: 10,
+                              offset: const Offset(0, 6),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  width: 32,
+                                  height: 32,
+                                  decoration: BoxDecoration(
+                                    color: bg,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Icon(
+                                    spentMode
+                                        ? Icons.trending_down
+                                        : Icons.flag_outlined,
+                                    size: 16,
+                                    color: accent,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    p.goal.name,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium
+                                        ?.copyWith(fontWeight: FontWeight.w700),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                Text(
+                                  cycleLabel,
+                                  style: Theme.of(context).textTheme.labelSmall
+                                      ?.copyWith(
+                                        color: const Color(0xFF9CA3AF),
+                                      ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(6),
+                              child: LinearProgressIndicator(
+                                value: widget.showAmounts ? pct : 0,
+                                minHeight: 8,
+                                backgroundColor: const Color(0xFFF0F0F0),
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  widget.showAmounts
+                                      ? accent
+                                      : const Color(0xFFE5E7EB),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                ObscurableAmount(
+                                  amount: p.progress.toStringAsFixed(2),
+                                  visible: widget.showAmounts,
+                                  style: Theme.of(context).textTheme.bodyMedium
+                                      ?.copyWith(fontWeight: FontWeight.w800),
+                                ),
+                                ObscurableAmount(
+                                  amount:
+                                      ' / ${p.goal.targetAmount.toStringAsFixed(2)}',
+                                  visible: widget.showAmounts,
+                                  style: Theme.of(context).textTheme.bodyMedium
+                                      ?.copyWith(
+                                        color: const Color(0xFF9CA3AF),
+                                      ),
+                                ),
+                                const Spacer(),
+                                Text(
+                                  '${p.daysRemaining}d left',
+                                  style: Theme.of(context).textTheme.labelSmall
+                                      ?.copyWith(
+                                        color: const Color(0xFF6B7280),
+                                      ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              statusLabel,
+                              style: Theme.of(context).textTheme.labelSmall
+                                  ?.copyWith(
+                                    color: statusColor,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                  separatorBuilder: (_, __) => const SizedBox(width: 12),
+                  itemCount: _homeGoals.length + 1,
+                ),
         ),
       ],
     );
@@ -460,77 +448,31 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
   void _showAddSourceDialog(BuildContext context) {
     showDialog(
       context: context,
-      builder:
-          (context) => AddMoneySourceDialog(
-            onAdd: (name, amount) async {
-              await widget.onAddSource(name, amount);
-              if (!context.mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Money source added.')),
-              );
-            },
-          ),
+      builder: (context) => AddMoneySourceDialog(
+        onAdd: (name, amount) async {
+          await widget.onAddSource(name, amount);
+          if (!context.mounted) return;
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Money source added.')));
+        },
+      ),
     );
   }
 
-  Future<void> _showQuickActionPicker(
+  Future<bool> _adjustSource(
     BuildContext context, {
     required bool isAdd,
+    required String sourceName,
+    required double currentAmount,
   }) async {
-    if (widget.moneySources.isEmpty) {
-      if (isAdd) {
-        _showAddSourceDialog(context);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Add a source before subtracting.')),
-        );
-      }
-      return;
-    }
-
-    final sourceName = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder:
-          (ctx) => SafeArea(
-            child: ListView(
-              shrinkWrap: true,
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-              children: [
-                Text(
-                  isAdd ? 'Add to which source?' : 'Subtract from which source?',
-                  style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                ...widget.moneySources.keys.map(
-                  (name) => ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      isAdd
-                          ? Icons.add_circle_outline
-                          : Icons.remove_circle_outline,
-                    ),
-                    title: Text(name),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => Navigator.of(ctx).pop(name),
-                  ),
-                ),
-              ],
-            ),
-          ),
-    );
-    if (sourceName == null || !context.mounted) return;
-
-    final currentAmount = widget.moneySources[sourceName] ?? 0;
     final draft = await _showQuickAdjustmentDialog(
       context,
       isAdd: isAdd,
       sourceName: sourceName,
       currentAmount: currentAmount,
     );
-    if (draft == null || !context.mounted) return;
+    if (draft == null || !context.mounted) return false;
 
     if (isAdd) {
       await widget.onQuickAdd(
@@ -549,98 +491,28 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
         effectiveDate: draft.effectiveDate,
       );
     }
-    if (!context.mounted) return;
+    if (!context.mounted) return true;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(isAdd ? 'Amount added.' : 'Amount subtracted.')),
     );
+    return true;
   }
 
-  Future<void> _showTransferPicker(BuildContext context) async {
+  Future<void> _transferFromSource(
+    BuildContext context, {
+    required String sourceName,
+    required double currentAmount,
+  }) async {
     if (widget.moneySources.length < 2) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Add at least two sources to transfer.')),
       );
       return;
     }
-
-    final sourceName = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder:
-          (ctx) => SafeArea(
-            child: ListView(
-              shrinkWrap: true,
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-              children: [
-                Text(
-                  'Transfer from which source?',
-                  style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                ...widget.moneySources.keys.map(
-                  (name) => ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.swap_horiz),
-                    title: Text(name),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => Navigator.of(ctx).pop(name),
-                  ),
-                ),
-              ],
-            ),
-          ),
-    );
-    if (sourceName == null || !context.mounted) return;
-
-    final didTransfer = await _showTransferDialog(
+    await _showTransferDialog(
       context,
       fromSource: sourceName,
-      fromCurrentAmount: widget.moneySources[sourceName] ?? 0,
-    );
-    if (didTransfer != true || !context.mounted) return;
-  }
-
-  Widget _buildQuickActions(BuildContext context) {
-    final actions = [
-      (
-        icon: Icons.add,
-        label: 'Add',
-        onTap: () => _showQuickActionPicker(context, isAdd: true),
-      ),
-      (
-        icon: Icons.remove,
-        label: 'Subtract',
-        onTap: () => _showQuickActionPicker(context, isAdd: false),
-      ),
-      (
-        icon: Icons.swap_horiz,
-        label: 'Transfer',
-        onTap: () => _showTransferPicker(context),
-      ),
-    ];
-
-    return Row(
-      children:
-          actions
-              .map(
-                (action) => Expanded(
-                  child: Padding(
-                    padding: const EdgeInsetsDirectional.only(end: 8),
-                    child: OutlinedButton.icon(
-                      onPressed: () => action.onTap(),
-                      icon: Icon(action.icon, size: 18),
-                      label: Text(action.label),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                    ),
-                  ),
-                ),
-              )
-              .toList(),
+      fromCurrentAmount: currentAmount,
     );
   }
 
@@ -651,13 +523,12 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
   ) async {
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder:
-          (context) => EditMoneySourceDialogWithMission(
-            oldName: oldName,
-            oldAmount: oldAmount,
-            mission: _mission,
-            showAmounts: widget.showAmounts,
-          ),
+      builder: (context) => EditMoneySourceDialogWithMission(
+        oldName: oldName,
+        oldAmount: oldAmount,
+        mission: _mission,
+        showAmounts: widget.showAmounts,
+      ),
     );
     if (result != null) {
       final String newName = result['name'];
@@ -673,9 +544,9 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
         effectiveDate: effectiveDate,
       );
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Money source updated.')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Money source updated.')));
       }
 
       // Only decrease mission.targetAmount if user confirmed and mission exists
@@ -697,28 +568,27 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
   void _showDeleteConfirmationDialog(BuildContext context, String sourceName) {
     showDialog(
       context: context,
-      builder:
-          (context) => AlertDialog(
-            title: const Text('Delete Money Source'),
-            content: Text('Are you sure you want to delete "$sourceName"?'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () async {
-                  await widget.onDeleteSource(sourceName);
-                  if (!context.mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Money source deleted.')),
-                  );
-                  Navigator.of(context).pop();
-                },
-                child: const Text('Delete'),
-              ),
-            ],
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Money Source'),
+        content: Text('Are you sure you want to delete "$sourceName"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
           ),
+          TextButton(
+            onPressed: () async {
+              await widget.onDeleteSource(sourceName);
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Money source deleted.')),
+              );
+              Navigator.of(context).pop();
+            },
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -739,16 +609,16 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
 
     final type = isAdd ? TagType.income : TagType.expense;
     final tags = await _storage.getTags(type: type);
-    final categoryNames =
-        tags.map((e) => e.name).toList()
-          ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    final categoryNames = tags.map((e) => e.name).toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
 
     if (!context.mounted) return null;
 
     bool categorize = false;
     bool customCategory = categoryNames.isEmpty;
-    String? selectedCategory =
-        categoryNames.isEmpty ? null : categoryNames.first;
+    String? selectedCategory = categoryNames.isEmpty
+        ? null
+        : categoryNames.first;
     final categoryController = TextEditingController();
     double? customCategoryAmount;
     bool backdate = false;
@@ -756,187 +626,163 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
 
     final draft = await showDialog<_QuickAdjustmentDraft>(
       context: context,
-      builder:
-          (ctx) => StatefulBuilder(
-            builder:
-                (ctx, setLocal) => AlertDialog(
-                  title: Text(
-                    isAdd ? 'Add to $sourceName' : 'Subtract from $sourceName',
-                  ),
-                  content: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Amount: ${amount.toStringAsFixed(2)}'),
-                        const SizedBox(height: 12),
-                        CheckboxListTile(
-                          value: categorize,
-                          contentPadding: EdgeInsets.zero,
-                          title: const Text(
-                            'Categorize this change (optional)',
-                          ),
-                          onChanged:
-                              (v) => setLocal(() => categorize = v ?? false),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: Text(
+            isAdd ? 'Add to $sourceName' : 'Subtract from $sourceName',
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Amount: ${amount.toStringAsFixed(2)}'),
+                const SizedBox(height: 12),
+                CheckboxListTile(
+                  value: categorize,
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Categorize this change (optional)'),
+                  onChanged: (v) => setLocal(() => categorize = v ?? false),
+                ),
+                if (categorize) ...[
+                  const SizedBox(height: 8),
+                  if (categoryNames.isNotEmpty)
+                    DropdownButtonFormField<String>(
+                      initialValue: customCategory
+                          ? '__custom__'
+                          : selectedCategory,
+                      decoration: const InputDecoration(labelText: 'Category'),
+                      items: [
+                        ...categoryNames.map(
+                          (n) => DropdownMenuItem(value: n, child: Text(n)),
                         ),
-                        if (categorize) ...[
-                          const SizedBox(height: 8),
-                          if (categoryNames.isNotEmpty)
-                            DropdownButtonFormField<String>(
-                              initialValue:
-                                  customCategory
-                                      ? '__custom__'
-                                      : selectedCategory,
-                              decoration: const InputDecoration(
-                                labelText: 'Category',
-                              ),
-                              items: [
-                                ...categoryNames.map(
-                                  (n) => DropdownMenuItem(
-                                    value: n,
-                                    child: Text(n),
-                                  ),
-                                ),
-                                const DropdownMenuItem(
-                                  value: '__custom__',
-                                  child: Text('Custom...'),
-                                ),
-                              ],
-                              onChanged: (v) {
-                                if (v == null) return;
-                                setLocal(() {
-                                  customCategory = v == '__custom__';
-                                  if (!customCategory) {
-                                    selectedCategory = v;
-                                  }
-                                });
-                              },
-                            ),
-                          if (customCategory) ...[
-                            const SizedBox(height: 8),
-                            TextField(
-                              controller: categoryController,
-                              decoration: const InputDecoration(
-                                labelText: 'Category name',
-                              ),
-                              autofocus: categoryNames.isEmpty,
-                            ),
-                          ],
-                          const SizedBox(height: 12),
-                          InkWell(
-                            borderRadius: BorderRadius.circular(12),
-                            onTap: () async {
-                              final v = await showAmountCalculatorSheet(
-                                ctx,
-                                title: 'Category amount',
-                                initialValue: customCategoryAmount,
-                                maxAmount: amount,
-                                allowZero: false,
-                              );
-                              if (v == null) return;
-                              setLocal(() => customCategoryAmount = v);
-                            },
-                            child: InputDecorator(
-                              decoration: const InputDecoration(
-                                labelText: 'Category amount (optional)',
-                                border: OutlineInputBorder(),
-                              ),
-                              child: Text(
-                                customCategoryAmount == null
-                                    ? 'Tap to set (defaults to full amount)'
-                                    : customCategoryAmount!.toStringAsFixed(2),
-                                style: TextStyle(
-                                  color:
-                                      customCategoryAmount == null
-                                          ? Theme.of(ctx).hintColor
-                                          : Theme.of(
-                                            ctx,
-                                          ).textTheme.bodyLarge?.color,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                        const SizedBox(height: 12),
-                        CheckboxListTile(
-                          value: backdate,
-                          contentPadding: EdgeInsets.zero,
-                          title: const Text(
-                            'Log this change to a different date',
-                          ),
-                          subtitle: const Text(
-                            'Choose if this was a late entry (backdate)',
-                          ),
-                          onChanged:
-                              (v) => setLocal(() => backdate = v ?? false),
+                        const DropdownMenuItem(
+                          value: '__custom__',
+                          child: Text('Custom...'),
                         ),
-                        if (backdate) ...[
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  DateFormat('yyyy-MM-dd').format(selectedDate),
-                                ),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.calendar_today),
-                                onPressed: () async {
-                                  final now = DateTime.now();
-                                  final picked = await showDatePicker(
-                                    context: ctx,
-                                    initialDate: selectedDate,
-                                    firstDate: DateTime(now.year - 3),
-                                    lastDate: DateTime(
-                                      now.year,
-                                      now.month,
-                                      now.day,
-                                    ),
-                                  );
-                                  if (picked != null)
-                                    setLocal(() => selectedDate = picked);
-                                },
-                              ),
-                            ],
-                          ),
-                        ],
                       ],
-                    ),
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(ctx).pop(),
-                      child: const Text('Cancel'),
-                    ),
-                    ElevatedButton(
-                      onPressed: () {
-                        String? categoryName;
-                        if (categorize) {
-                          categoryName =
-                              customCategory
-                                  ? categoryController.text.trim()
-                                  : selectedCategory;
-                          if (categoryName == null || categoryName.isEmpty)
-                            return;
-                        }
-
-                        Navigator.of(ctx).pop(
-                          _QuickAdjustmentDraft(
-                            amount: amount,
-                            categoryName: categoryName,
-                            categoryAmount:
-                                categorize
-                                    ? (customCategoryAmount ?? amount)
-                                    : null,
-                            effectiveDate: backdate ? selectedDate : null,
-                          ),
-                        );
+                      onChanged: (v) {
+                        if (v == null) return;
+                        setLocal(() {
+                          customCategory = v == '__custom__';
+                          if (!customCategory) {
+                            selectedCategory = v;
+                          }
+                        });
                       },
-                      child: const Text('Save'),
+                    ),
+                  if (customCategory) ...[
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: categoryController,
+                      decoration: const InputDecoration(
+                        labelText: 'Category name',
+                      ),
+                      autofocus: categoryNames.isEmpty,
                     ),
                   ],
+                  const SizedBox(height: 12),
+                  InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () async {
+                      final v = await showAmountCalculatorSheet(
+                        ctx,
+                        title: 'Category amount',
+                        initialValue: customCategoryAmount,
+                        maxAmount: amount,
+                        allowZero: false,
+                      );
+                      if (v == null) return;
+                      setLocal(() => customCategoryAmount = v);
+                    },
+                    child: InputDecorator(
+                      decoration: const InputDecoration(
+                        labelText: 'Category amount (optional)',
+                        border: OutlineInputBorder(),
+                      ),
+                      child: Text(
+                        customCategoryAmount == null
+                            ? 'Tap to set (defaults to full amount)'
+                            : customCategoryAmount!.toStringAsFixed(2),
+                        style: TextStyle(
+                          color: customCategoryAmount == null
+                              ? Theme.of(ctx).hintColor
+                              : Theme.of(ctx).textTheme.bodyLarge?.color,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                CheckboxListTile(
+                  value: backdate,
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Log this change to a different date'),
+                  subtitle: const Text(
+                    'Choose if this was a late entry (backdate)',
+                  ),
+                  onChanged: (v) => setLocal(() => backdate = v ?? false),
                 ),
+                if (backdate) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          DateFormat('yyyy-MM-dd').format(selectedDate),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.calendar_today),
+                        onPressed: () async {
+                          final now = DateTime.now();
+                          final picked = await showDatePicker(
+                            context: ctx,
+                            initialDate: selectedDate,
+                            firstDate: DateTime(now.year - 3),
+                            lastDate: DateTime(now.year, now.month, now.day),
+                          );
+                          if (picked != null)
+                            setLocal(() => selectedDate = picked);
+                        },
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                String? categoryName;
+                if (categorize) {
+                  categoryName = customCategory
+                      ? categoryController.text.trim()
+                      : selectedCategory;
+                  if (categoryName == null || categoryName.isEmpty) return;
+                }
+
+                Navigator.of(ctx).pop(
+                  _QuickAdjustmentDraft(
+                    amount: amount,
+                    categoryName: categoryName,
+                    categoryAmount: categorize
+                        ? (customCategoryAmount ?? amount)
+                        : null,
+                    effectiveDate: backdate ? selectedDate : null,
+                  ),
+                );
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
     );
 
     categoryController.dispose();
@@ -984,24 +830,13 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
                     title: const Text('Add amount'),
                     subtitle: const Text('Increase this source by a number'),
                     onTap: () async {
-                      final draft = await _showQuickAdjustmentDialog(
+                      final changed = await _adjustSource(
                         sheetCtx,
                         isAdd: true,
                         sourceName: sourceName,
                         currentAmount: currentAmount,
                       );
-                      if (draft == null) return;
-                      await widget.onQuickAdd(
-                        sourceName,
-                        draft.amount,
-                        categoryName: draft.categoryName,
-                        categoryAmount: draft.categoryAmount,
-                        effectiveDate: draft.effectiveDate,
-                      );
-                      if (!sheetCtx.mounted) return;
-                      ScaffoldMessenger.of(sheetCtx).showSnackBar(
-                        const SnackBar(content: Text('Amount added.')),
-                      );
+                      if (!changed || !sheetCtx.mounted) return;
                       Navigator.of(sheetCtx).pop();
                     },
                   ),
@@ -1010,24 +845,13 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
                     title: const Text('Subtract amount'),
                     subtitle: const Text('Decrease this source by a number'),
                     onTap: () async {
-                      final draft = await _showQuickAdjustmentDialog(
+                      final changed = await _adjustSource(
                         sheetCtx,
                         isAdd: false,
                         sourceName: sourceName,
                         currentAmount: currentAmount,
                       );
-                      if (draft == null) return;
-                      await widget.onQuickSubtract(
-                        sourceName,
-                        draft.amount,
-                        categoryName: draft.categoryName,
-                        categoryAmount: draft.categoryAmount,
-                        effectiveDate: draft.effectiveDate,
-                      );
-                      if (!sheetCtx.mounted) return;
-                      ScaffoldMessenger.of(sheetCtx).showSnackBar(
-                        const SnackBar(content: Text('Amount subtracted.')),
-                      );
+                      if (!changed || !sheetCtx.mounted) return;
                       Navigator.of(sheetCtx).pop();
                     },
                   ),
@@ -1038,13 +862,22 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
                       'Move money from this source to another',
                     ),
                     onTap: () async {
+                      if (widget.moneySources.length < 2) {
+                        ScaffoldMessenger.of(sheetCtx).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Add at least two sources to transfer.',
+                            ),
+                          ),
+                        );
+                        return;
+                      }
                       final didTransfer = await _showTransferDialog(
                         sheetCtx,
                         fromSource: sourceName,
                         fromCurrentAmount: currentAmount,
                       );
-                      if (didTransfer != true) return;
-                      if (!sheetCtx.mounted) return;
+                      if (didTransfer != true || !sheetCtx.mounted) return;
                       Navigator.of(sheetCtx).pop();
                     },
                   ),
@@ -1087,30 +920,31 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
                     onTap: () async {
                       final confirmed = await showDialog<bool>(
                         context: sheetCtx,
-                        builder:
-                            (ctx) => AlertDialog(
-                              title: const Text('Delete Money Source'),
-                              content: Text(
-                                'Are you sure you want to delete "$sourceName"?',
-                              ),
-                              actions: [
-                                TextButton(
-                                  onPressed: () => Navigator.of(ctx).pop(false),
-                                  child: const Text('Cancel'),
-                                ),
-                                TextButton(
-                                  onPressed: () => Navigator.of(ctx).pop(true),
-                                  child: const Text('Delete'),
-                                ),
-                              ],
+                        builder: (ctx) => AlertDialog(
+                          title: const Text('Delete Money Source'),
+                          content: Text(
+                            'Are you sure you want to delete "$sourceName"?',
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.of(ctx).pop(false),
+                              child: const Text('Cancel'),
                             ),
+                            TextButton(
+                              onPressed: () => Navigator.of(ctx).pop(true),
+                              child: const Text('Delete'),
+                            ),
+                          ],
+                        ),
                       );
 
                       if (confirmed == true) {
                         await widget.onDeleteSource(sourceName);
                         if (!sheetCtx.mounted) return;
                         ScaffoldMessenger.of(sheetCtx).showSnackBar(
-                          const SnackBar(content: Text('Money source deleted.')),
+                          const SnackBar(
+                            content: Text('Money source deleted.'),
+                          ),
                         );
                         Navigator.of(sheetCtx).pop();
                       }
@@ -1138,59 +972,54 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
 
     final res = await showDialog<_TransferDraft>(
       context: context,
-      builder:
-          (ctx) => AlertDialog(
-            title: const Text('Transfer'),
-            content: StatefulBuilder(
-              builder:
-                  (ctx, setLocal) => DropdownButtonFormField<String>(
-                    initialValue: toSource,
-                    decoration: const InputDecoration(labelText: 'To'),
-                    items:
-                        targets
-                            .map(
-                              (s) => DropdownMenuItem(value: s, child: Text(s)),
-                            )
-                            .toList(),
-                    onChanged: (v) {
-                      if (v == null) return;
-                      setLocal(() => toSource = v);
-                    },
-                  ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () async {
-                  final amount = await showAmountCalculatorSheet(
-                    ctx,
-                    title: 'Amount',
-                    maxAmount: fromCurrentAmount,
-                    allowZero: false,
-                    announceMax: widget.showAmounts,
-                  );
-                  if (amount == null) return;
-                  if (!ctx.mounted) return;
-                  Navigator.of(
-                    ctx,
-                  ).pop(_TransferDraft(toSource: toSource, amount: amount));
-                },
-                child: const Text('Enter amount'),
-              ),
-            ],
+      builder: (ctx) => AlertDialog(
+        title: const Text('Transfer'),
+        content: StatefulBuilder(
+          builder: (ctx, setLocal) => DropdownButtonFormField<String>(
+            initialValue: toSource,
+            decoration: const InputDecoration(labelText: 'To'),
+            items: targets
+                .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                .toList(),
+            onChanged: (v) {
+              if (v == null) return;
+              setLocal(() => toSource = v);
+            },
           ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final amount = await showAmountCalculatorSheet(
+                ctx,
+                title: 'Amount',
+                maxAmount: fromCurrentAmount,
+                allowZero: false,
+                announceMax: widget.showAmounts,
+              );
+              if (amount == null) return;
+              if (!ctx.mounted) return;
+              Navigator.of(
+                ctx,
+              ).pop(_TransferDraft(toSource: toSource, amount: amount));
+            },
+            child: const Text('Enter amount'),
+          ),
+        ],
+      ),
     );
 
     if (res == null) return false;
     try {
       await widget.onTransfer(fromSource, res.toSource, res.amount);
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Transfer completed.')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Transfer completed.')));
       }
       return true;
     } catch (e) {
@@ -1207,142 +1036,187 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
     final total = widget.moneySources.values.fold<double>(0, (a, b) => a + b);
     final tour = AppTourScope.maybeOf(context);
 
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: SingleChildScrollView(
-        child: Column(
-          children: [
-            // Keep the balance summary compact and aligned with the page action.
-            KeyedSubtree(
-              key: tour?.totalMoney,
-              child: Column(
-                children: [
-                  Row(
+    return Stack(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.only(bottom: 120),
+            child: Column(
+              children: [
+                // Keep the balance summary compact and aligned with the page action.
+                KeyedSubtree(
+                  key: tour?.totalMoney,
+                  child: Column(
                     children: [
-                      Expanded(
-                        child: Text(
-                          'Total Money',
-                          style: Theme.of(context).textTheme.headlineSmall
-                              ?.copyWith(fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                      IconButton(
-                        key: tour?.hideAmounts,
-                        icon: Icon(
-                          widget.showAmounts
-                              ? Icons.visibility
-                              : Icons.visibility_off,
-                          color: Colors.grey,
-                        ),
-                        onPressed: _toggleAmountsVisibility,
-                        tooltip:
-                            widget.showAmounts
-                                ? 'Hide amounts'
-                                : 'Show amounts',
-                      ),
-                      if (widget.headerAction != null)
-                        widget.headerAction!,
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final isCompact = constraints.maxWidth < 560;
-                      final amountText = ObscurableAmount(
-                        amount: total.toStringAsFixed(2),
-                        visible: widget.showAmounts,
-                        textAlign: TextAlign.start,
-                        style: Theme.of(
-                          context,
-                        ).textTheme.displaySmall?.copyWith(
-                          color: const Color(0xFF2E7D32),
-                          fontWeight: FontWeight.bold,
-                        ),
-                      );
-
-                      if (isCompact) {
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            FittedBox(
-                              fit: BoxFit.scaleDown,
-                              alignment: AlignmentDirectional.centerStart,
-                              child: amountText,
-                            ),
-                            const SizedBox(height: 8),
-                            _buildMainGoalInline(context),
-                          ],
-                        );
-                      }
-
-                      return Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
+                      Row(
                         children: [
-                          Flexible(
-                            child: FittedBox(
-                              fit: BoxFit.scaleDown,
-                              alignment: AlignmentDirectional.centerStart,
-                              child: amountText,
+                          Expanded(
+                            child: Text(
+                              'Total Money',
+                              style: Theme.of(context).textTheme.headlineSmall
+                                  ?.copyWith(fontWeight: FontWeight.w700),
                             ),
                           ),
-                          const SizedBox(width: 14),
-                          Flexible(child: _buildMainGoalInline(context)),
+                          IconButton(
+                            key: tour?.hideAmounts,
+                            icon: Icon(
+                              widget.showAmounts
+                                  ? Icons.visibility
+                                  : Icons.visibility_off,
+                              color: Colors.grey,
+                            ),
+                            onPressed: _toggleAmountsVisibility,
+                            tooltip: widget.showAmounts
+                                ? 'Hide amounts'
+                                : 'Show amounts',
+                          ),
+                          if (widget.headerAction != null) widget.headerAction!,
                         ],
-                      );
-                    },
+                      ),
+                      const SizedBox(height: 8),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final isCompact = constraints.maxWidth < 560;
+                          final amountText = ObscurableAmount(
+                            amount: total.toStringAsFixed(2),
+                            visible: widget.showAmounts,
+                            textAlign: TextAlign.start,
+                            style: Theme.of(context).textTheme.displaySmall
+                                ?.copyWith(
+                                  color: const Color(0xFF2E7D32),
+                                  fontWeight: FontWeight.bold,
+                                ),
+                          );
+
+                          if (isCompact) {
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  alignment: AlignmentDirectional.centerStart,
+                                  child: amountText,
+                                ),
+                                const SizedBox(height: 8),
+                                _buildMainGoalInline(context),
+                              ],
+                            );
+                          }
+
+                          return Row(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Flexible(
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  alignment: AlignmentDirectional.centerStart,
+                                  child: amountText,
+                                ),
+                              ),
+                              const SizedBox(width: 14),
+                              Flexible(child: _buildMainGoalInline(context)),
+                            ],
+                          );
+                        },
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-            _buildQuickActions(context),
-            const SizedBox(height: 24),
+                ),
+                const SizedBox(height: 20),
 
-            KeyedSubtree(key: tour?.goals, child: _buildGoalsStrip()),
+                KeyedSubtree(key: tour?.goals, child: _buildGoalsStrip()),
 
-            const SizedBox(height: 16),
-            if (widget.moneySources.isEmpty)
-              _buildEmptySourcesState(context)
-            else
-              ...widget.moneySources.entries.toList().asMap().entries.map((
-                indexed,
-              ) {
-                final entry = indexed.value;
-                return MoneySourceCard(
-                  key: indexed.key == 0 ? tour?.firstSource : ValueKey(entry.key),
-                  sourceName: entry.key,
-                  amount: entry.value,
-                  showAmount: widget.showAmounts,
-                  onEdit:
-                      (newName, newAmount) => _showQuickActionsSheet(
+                const SizedBox(height: 16),
+                if (widget.moneySources.isEmpty)
+                  _buildEmptySourcesState(context)
+                else
+                  ...widget.moneySources.entries.toList().asMap().entries.map((
+                    indexed,
+                  ) {
+                    final entry = indexed.value;
+                    return MoneySourceCard(
+                      key: indexed.key == 0
+                          ? tour?.firstSource
+                          : ValueKey(entry.key),
+                      sourceName: entry.key,
+                      amount: entry.value,
+                      showAmount: widget.showAmounts,
+                      onEdit: (newName, newAmount) => _showQuickActionsSheet(
                         context,
                         sourceName: entry.key,
                         currentAmount: entry.value,
                       ),
-                  onDelete:
-                      () => _showDeleteConfirmationDialog(context, entry.key),
-                );
-              }),
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.only(top: 8.0),
-                child: OutlinedButton.icon(
-                  key: tour?.addSource,
-                  onPressed: () => _showAddSourceDialog(context),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Add Money Source'),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 12,
+                      onDelete: () =>
+                          _showDeleteConfirmationDialog(context, entry.key),
+                      onAdd: () => _adjustSource(
+                        context,
+                        isAdd: true,
+                        sourceName: entry.key,
+                        currentAmount: entry.value,
+                      ),
+                      onSubtract: () => _adjustSource(
+                        context,
+                        isAdd: false,
+                        sourceName: entry.key,
+                        currentAmount: entry.value,
+                      ),
+                      onTransfer: () => _transferFromSource(
+                        context,
+                        sourceName: entry.key,
+                        currentAmount: entry.value,
+                      ),
+                    );
+                  }),
+              ],
+            ),
+          ),
+        ),
+        PositionedDirectional(
+          end: 16,
+          bottom: 8,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 7,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.96),
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.08),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
                     ),
+                  ],
+                ),
+                child: const Text(
+                  'Add money',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF6B7280),
                   ),
                 ),
               ),
-            ),
-          ],
+              const SizedBox(width: 10),
+              FloatingActionButton.small(
+                key: tour?.addSource,
+                heroTag: 'addMoneySource',
+                tooltip: 'Add money',
+                backgroundColor: const Color(0xFF1B5E20),
+                foregroundColor: Colors.white,
+                onPressed: () => _showAddSourceDialog(context),
+                child: const Icon(Icons.add),
+              ),
+            ],
+          ),
         ),
-      ),
+      ],
     );
   }
 
@@ -1374,9 +1248,9 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
           const SizedBox(height: 4),
           Text(
             'Add your first source to start tracking your balance.',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: const Color(0xFF6B7280),
-            ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: const Color(0xFF6B7280)),
             textAlign: TextAlign.center,
           ),
         ],
@@ -1482,10 +1356,9 @@ class _AddMissionDialogState extends State<AddMissionDialog> {
                       ? 'Tap to enter'
                       : _amount!.toStringAsFixed(2),
                   style: TextStyle(
-                    color:
-                        _amount == null
-                            ? Theme.of(context).hintColor
-                            : Theme.of(context).textTheme.bodyLarge?.color,
+                    color: _amount == null
+                        ? Theme.of(context).hintColor
+                        : Theme.of(context).textTheme.bodyLarge?.color,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -1630,9 +1503,8 @@ class _EditMoneySourceDialogWithMissionState
             TextFormField(
               initialValue: _name,
               decoration: const InputDecoration(labelText: 'Source Name'),
-              validator:
-                  (value) =>
-                      value == null || value.isEmpty ? 'Enter a name' : null,
+              validator: (value) =>
+                  value == null || value.isEmpty ? 'Enter a name' : null,
               onChanged: (value) => _name = value,
             ),
             const SizedBox(height: 12),
@@ -1669,7 +1541,8 @@ class _EditMoneySourceDialogWithMissionState
                 value: _decreaseMission,
                 onChanged: (v) => setState(() => _decreaseMission = v ?? false),
                 title: ObscurableAmount(
-                  amount: 'Decrease mission by ${_decrement.toStringAsFixed(2)}',
+                  amount:
+                      'Decrease mission by ${_decrement.toStringAsFixed(2)}',
                   visible: widget.showAmounts,
                 ),
               ),

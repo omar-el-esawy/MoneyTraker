@@ -80,7 +80,7 @@ class AppUpdateService {
   /// Uses the 6-hour saved copy when the last fetch succeeded. If that fetch
   /// failed because of the network, the next open skips the saved copy.
   static Future<UpdateOffer?> check() async {
-    if (!Platform.isAndroid) return null;
+    if (kIsWeb || !Platform.isAndroid) return null;
     final result = await checkLatest();
     return result?.offer;
   }
