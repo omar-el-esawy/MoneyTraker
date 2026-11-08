@@ -1015,6 +1015,18 @@ class _InsightsPageState extends State<InsightsPage> {
                   fontWeight: FontWeight.w600,
                 ),
               ),
+              const SizedBox(height: 2),
+              Text(
+                p.statusLabelFor(showAmounts: widget.showAmounts),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: p.statusIsWarning
+                      ? const Color(0xFFC62828)
+                      : const Color(0xFF2E7D32),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ],
           ),
         ),

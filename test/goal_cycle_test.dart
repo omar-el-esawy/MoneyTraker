@@ -4,6 +4,8 @@ import 'package:money_traker/pages/goals/logic/goal_engine.dart';
 
 Goal _goal({
   required GoalType type,
+  GoalDirection direction = GoalDirection.spendingLimit,
+  double targetAmount = 100,
   int? monthStartDay,
   int? repeatEveryDays,
   DateTime? repeatStartDate,
@@ -12,9 +14,9 @@ Goal _goal({
 }) {
   return Goal(
     name: 'Test',
-    targetAmount: 100,
+    targetAmount: targetAmount,
     type: type,
-    direction: GoalDirection.spendingLimit,
+    direction: direction,
     monthStartDay: monthStartDay,
     repeatEveryDays: repeatEveryDays,
     repeatStartDate: repeatStartDate,
@@ -74,25 +76,37 @@ void main() {
   });
 
   test('spending limit matches insights when the drop has no category', () {
-    final expense = insightsStyleExpense(balanceDrops: 10000, taggedExpenses: 0);
+    final expense = insightsStyleExpense(
+      balanceDrops: 10000,
+      taggedExpenses: 0,
+    );
 
     expect(expense, 10000);
   });
 
   test('spending limit matches insights and does not add categories twice', () {
-    final expense = insightsStyleExpense(balanceDrops: 10000, taggedExpenses: 10000);
+    final expense = insightsStyleExpense(
+      balanceDrops: 10000,
+      taggedExpenses: 10000,
+    );
 
     expect(expense, 10000);
   });
 
   test('spending limit keeps categorized spending above the balance drop', () {
-    final expense = insightsStyleExpense(balanceDrops: 4000, taggedExpenses: 10000);
+    final expense = insightsStyleExpense(
+      balanceDrops: 4000,
+      taggedExpenses: 10000,
+    );
 
     expect(expense, 10000);
   });
 
   test('income does not reduce the insights expense total', () {
-    final expense = insightsStyleExpense(balanceDrops: 10000, taggedExpenses: 0);
+    final expense = insightsStyleExpense(
+      balanceDrops: 10000,
+      taggedExpenses: 0,
+    );
 
     expect(uncategorizedGap(50000, 0), 50000);
     expect(expense, 10000);
@@ -138,5 +152,144 @@ void main() {
     );
 
     expect(day.expense, 0);
+  });
+
+  test('a 30-day spending goal allows 200 a day and flags day-9 overage', () {
+    final goal = _goal(
+      type: GoalType.repeatingDays,
+      targetAmount: 6000,
+      repeatEveryDays: 30,
+      repeatStartDate: DateTime(2026, 11, 1),
+    );
+    final now = DateTime(2026, 11, 9);
+    final cycle = goal.currentCycle(now: now).range;
+    final pace = computeSpendingPace(
+      targetAmount: goal.targetAmount,
+      cycle: cycle,
+      spent: 2000,
+      now: now,
+    );
+
+    expect(pace.cycleDays, 30);
+    expect(pace.dayNumber, 9);
+    expect(pace.dailyAllowance, 200);
+    expect(pace.expectedByToday, 1800);
+    expect(pace.overage, 200);
+    expect(
+      goalStatusLabel(goal: goal, cycle: cycle, progress: 2000, now: now),
+      'Over limit · Save 200 tomorrow',
+    );
+  });
+
+  test('a 30-day spending goal stays on track at the cumulative allowance', () {
+    final goal = _goal(
+      type: GoalType.repeatingDays,
+      targetAmount: 6000,
+      repeatEveryDays: 30,
+      repeatStartDate: DateTime(2026, 11, 1),
+    );
+    final now = DateTime(2026, 11, 9);
+    final cycle = goal.currentCycle(now: now).range;
+
+    expect(
+      goalStatusLabel(goal: goal, cycle: cycle, progress: 1800, now: now),
+      'On track',
+    );
+    expect(
+      spendingStatusIsWarning(
+        goal: goal,
+        cycle: cycle,
+        progress: 1800,
+        now: now,
+      ),
+      isFalse,
+    );
+  });
+
+  test('a monthly spending goal uses the actual cycle length', () {
+    final goal = _goal(
+      type: GoalType.monthly,
+      targetAmount: 6000,
+      monthStartDay: 1,
+    );
+    final now = DateTime(2026, 11, 9);
+    final cycle = goal.currentCycle(now: now).range;
+    final pace = computeSpendingPace(
+      targetAmount: goal.targetAmount,
+      cycle: cycle,
+      spent: 2000,
+      now: now,
+    );
+
+    expect(pace.cycleDays, 30);
+    expect(pace.dayNumber, 9);
+    expect(pace.dailyAllowance, 200);
+    expect(pace.overage, 200);
+  });
+
+  test('a February monthly goal divides the limit by 28 days', () {
+    final goal = _goal(
+      type: GoalType.monthly,
+      targetAmount: 6000,
+      monthStartDay: 1,
+    );
+    final now = DateTime(2026, 2, 9);
+    final cycle = goal.currentCycle(now: now).range;
+    final pace = computeSpendingPace(
+      targetAmount: goal.targetAmount,
+      cycle: cycle,
+      spent: 2000,
+      now: now,
+    );
+
+    expect(pace.cycleDays, 28);
+    expect(pace.dayNumber, 9);
+    expect(pace.dailyAllowance, closeTo(6000 / 28, 0.0000001));
+    expect(
+      goalStatusLabel(goal: goal, cycle: cycle, progress: 2000, now: now),
+      'Over limit · Save ${compactGoalAmount(2000 - (6000 / 28) * 9)} tomorrow',
+    );
+  });
+
+  test('savings goals keep reached and in-progress labels', () {
+    final goal = _goal(
+      type: GoalType.monthly,
+      direction: GoalDirection.savingsTarget,
+      targetAmount: 6000,
+      monthStartDay: 1,
+    );
+    final now = DateTime(2026, 11, 9);
+    final cycle = goal.currentCycle(now: now).range;
+
+    expect(
+      goalStatusLabel(goal: goal, cycle: cycle, progress: 2000, now: now),
+      'In progress',
+    );
+    expect(
+      goalStatusLabel(goal: goal, cycle: cycle, progress: 6000, now: now),
+      'Reached',
+    );
+  });
+
+  test('hidden amounts keep Over limit without the save hint', () {
+    final goal = _goal(
+      type: GoalType.repeatingDays,
+      targetAmount: 6000,
+      repeatEveryDays: 30,
+      repeatStartDate: DateTime(2026, 11, 1),
+    );
+    final now = DateTime(2026, 11, 9);
+    final cycle = goal.currentCycle(now: now).range;
+
+    expect(
+      goalStatusLabel(
+        goal: goal,
+        cycle: cycle,
+        progress: 2000,
+        now: now,
+        showAmounts: false,
+      ),
+      'Over limit',
+    );
   });
 }

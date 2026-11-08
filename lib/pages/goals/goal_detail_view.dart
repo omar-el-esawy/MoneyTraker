@@ -72,8 +72,12 @@ class _GoalDetailPageViewState extends State<GoalDetailPageView> {
   @override
   Widget build(BuildContext context) {
     final spentMode = _goal.direction == GoalDirection.spendingLimit;
-    final accent = spentMode ? const Color(0xFFD32F2F) : const Color(0xFF1B5E20);
-    final bgColor = spentMode ? const Color(0xFFFFEBEE) : const Color(0xFFE8F5E9);
+    final accent = spentMode
+        ? const Color(0xFFD32F2F)
+        : const Color(0xFF1B5E20);
+    final bgColor = spentMode
+        ? const Color(0xFFFFEBEE)
+        : const Color(0xFFE8F5E9);
 
     return Scaffold(
       appBar: AppBar(
@@ -114,7 +118,9 @@ class _GoalDetailPageViewState extends State<GoalDetailPageView> {
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                                 child: Icon(
-                                  spentMode ? Icons.trending_down : Icons.flag_outlined,
+                                  spentMode
+                                      ? Icons.trending_down
+                                      : Icons.flag_outlined,
                                   color: accent,
                                   size: 24,
                                 ),
@@ -126,11 +132,21 @@ class _GoalDetailPageViewState extends State<GoalDetailPageView> {
                                   children: [
                                     Text(
                                       _goal.name,
-                                      style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleLarge
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w700,
+                                          ),
                                     ),
                                     Text(
-                                      spentMode ? 'Spending Limit' : 'Savings Target',
-                                      style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.grey),
+                                      spentMode
+                                          ? 'Spending Limit'
+                                          : 'Savings Target',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelSmall
+                                          ?.copyWith(color: Colors.grey),
                                     ),
                                   ],
                                 ),
@@ -141,7 +157,9 @@ class _GoalDetailPageViewState extends State<GoalDetailPageView> {
                           ClipRRect(
                             borderRadius: BorderRadius.circular(8),
                             child: LinearProgressIndicator(
-                              value: _progress == null ? 0 : (_progress!.percent.clamp(0.0, 1.0)),
+                              value: _progress == null
+                                  ? 0
+                                  : (_progress!.percent.clamp(0.0, 1.0)),
                               minHeight: 12,
                               backgroundColor: const Color(0xFFF0F0F0),
                               valueColor: AlwaysStoppedAnimation<Color>(accent),
@@ -156,11 +174,19 @@ class _GoalDetailPageViewState extends State<GoalDetailPageView> {
                                 children: [
                                   Text(
                                     'Progress',
-                                    style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.grey),
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelSmall
+                                        ?.copyWith(color: Colors.grey),
                                   ),
                                   Text(
-                                    _progress == null ? '0.00' : '${_progress!.progress.toStringAsFixed(2)} / ${_goal.targetAmount.toStringAsFixed(2)}',
-                                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                                    _progress == null
+                                        ? '0.00'
+                                        : '${_progress!.progress.toStringAsFixed(2)} / ${_goal.targetAmount.toStringAsFixed(2)}',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium
+                                        ?.copyWith(fontWeight: FontWeight.w700),
                                   ),
                                 ],
                               ),
@@ -169,16 +195,37 @@ class _GoalDetailPageViewState extends State<GoalDetailPageView> {
                                 children: [
                                   Text(
                                     'Days Remaining',
-                                    style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.grey),
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelSmall
+                                        ?.copyWith(color: Colors.grey),
                                   ),
                                   Text(
                                     '${_progress?.daysRemaining ?? 0} days',
-                                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium
+                                        ?.copyWith(fontWeight: FontWeight.w700),
                                   ),
                                 ],
                               ),
                             ],
                           ),
+                          if (_progress != null) ...[
+                            const SizedBox(height: 12),
+                            Text(
+                              _progress!.statusLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(
+                                    color: _progress!.statusIsWarning
+                                        ? const Color(0xFFC62828)
+                                        : const Color(0xFF2E7D32),
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -204,4 +251,3 @@ class _GoalDetailPageViewState extends State<GoalDetailPageView> {
     );
   }
 }
-

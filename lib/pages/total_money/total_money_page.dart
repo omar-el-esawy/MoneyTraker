@@ -208,6 +208,18 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
             fontWeight: FontWeight.w700,
           ),
         ),
+        const SizedBox(height: 2),
+        Text(
+          p.statusLabelFor(showAmounts: widget.showAmounts),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+            color: p.statusIsWarning
+                ? const Color(0xFFC62828)
+                : const Color(0xFF2E7D32),
+            fontWeight: FontWeight.w700,
+          ),
+        ),
       ],
     );
   }
@@ -303,11 +315,10 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
                         ? const Color(0xFFFFEBEE)
                         : const Color(0xFFE8F5E9);
                     final pct = p.percent.clamp(0.0, 1.0);
-                    final completed = p.progress >= p.goal.targetAmount;
-                    final statusLabel = spentMode
-                        ? (completed ? 'Over limit' : 'On track')
-                        : (completed ? 'Reached' : 'In progress');
-                    final statusColor = spentMode && completed
+                    final statusLabel = p.statusLabelFor(
+                      showAmounts: widget.showAmounts,
+                    );
+                    final statusColor = p.statusIsWarning
                         ? const Color(0xFFC62828)
                         : const Color(0xFF2E7D32);
 
@@ -422,6 +433,8 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
                             const SizedBox(height: 6),
                             Text(
                               statusLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: Theme.of(context).textTheme.labelSmall
                                   ?.copyWith(
                                     color: statusColor,

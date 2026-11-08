@@ -27,7 +27,8 @@ class GoalProgress {
 
   double get remaining => goal.targetAmount - progress;
 
-  double get percent => goal.targetAmount <= 0 ? 0 : (progress / goal.targetAmount);
+  double get percent =>
+      goal.targetAmount <= 0 ? 0 : (progress / goal.targetAmount);
 
   int get daysRemaining {
     final now = DateTime.now();
@@ -37,6 +38,131 @@ class GoalProgress {
     final diff = d.difference(n).inDays;
     return diff < 0 ? 0 : diff;
   }
+
+  GoalSpendingPace get spendingPace => computeSpendingPace(
+    targetAmount: goal.targetAmount,
+    cycle: cycle,
+    spent: progress,
+  );
+
+  String get statusLabel => statusLabelFor();
+
+  bool get statusIsWarning =>
+      spendingStatusIsWarning(goal: goal, cycle: cycle, progress: progress);
+
+  String statusLabelFor({DateTime? now, bool showAmounts = true}) {
+    return goalStatusLabel(
+      goal: goal,
+      cycle: cycle,
+      progress: progress,
+      now: now,
+      showAmounts: showAmounts,
+    );
+  }
+}
+
+DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
+
+int goalCycleDays(DateTimeRange cycle) {
+  final days = _dateOnly(cycle.end).difference(_dateOnly(cycle.start)).inDays;
+  return days < 1 ? 1 : days;
+}
+
+int goalDayNumber(DateTimeRange cycle, DateTime now) {
+  final start = _dateOnly(cycle.start);
+  final end = _dateOnly(cycle.end);
+  final today = _dateOnly(now);
+  final total = goalCycleDays(cycle);
+  if (today.isBefore(start)) return 0;
+  if (!today.isBefore(end)) return total;
+  return today.difference(start).inDays + 1;
+}
+
+String compactGoalAmount(double amount) {
+  final cents = (amount.abs() * 100).round();
+  final value = cents / 100.0;
+  if (cents % 100 == 0) return value.round().toString();
+  return value.toStringAsFixed(2);
+}
+
+class GoalSpendingPace {
+  final int cycleDays;
+  final int dayNumber;
+  final double dailyAllowance;
+  final double expectedByToday;
+  final double spent;
+  final double overage;
+
+  const GoalSpendingPace({
+    required this.cycleDays,
+    required this.dayNumber,
+    required this.dailyAllowance,
+    required this.expectedByToday,
+    required this.spent,
+    required this.overage,
+  });
+
+  bool get isOverLimit => overage >= 0.005;
+
+  String statusLabel({bool showAmounts = true}) {
+    if (!isOverLimit) return 'On track';
+    if (!showAmounts) return 'Over limit';
+    return 'Over limit · Save ${compactGoalAmount(overage)} tomorrow';
+  }
+}
+
+GoalSpendingPace computeSpendingPace({
+  required double targetAmount,
+  required DateTimeRange cycle,
+  required double spent,
+  DateTime? now,
+}) {
+  final cycleDays = goalCycleDays(cycle);
+  final dayNumber = goalDayNumber(cycle, now ?? DateTime.now());
+  final dailyAllowance = targetAmount / cycleDays;
+  final expectedByToday = dailyAllowance * dayNumber;
+  final rawOverage = spent - expectedByToday;
+  return GoalSpendingPace(
+    cycleDays: cycleDays,
+    dayNumber: dayNumber,
+    dailyAllowance: dailyAllowance,
+    expectedByToday: expectedByToday,
+    spent: spent,
+    overage: rawOverage < 0 ? 0 : rawOverage,
+  );
+}
+
+String goalStatusLabel({
+  required Goal goal,
+  required DateTimeRange cycle,
+  required double progress,
+  DateTime? now,
+  bool showAmounts = true,
+}) {
+  if (goal.direction == GoalDirection.savingsTarget) {
+    return progress >= goal.targetAmount ? 'Reached' : 'In progress';
+  }
+  return computeSpendingPace(
+    targetAmount: goal.targetAmount,
+    cycle: cycle,
+    spent: progress,
+    now: now,
+  ).statusLabel(showAmounts: showAmounts);
+}
+
+bool spendingStatusIsWarning({
+  required Goal goal,
+  required DateTimeRange cycle,
+  required double progress,
+  DateTime? now,
+}) {
+  if (goal.direction != GoalDirection.spendingLimit) return false;
+  return computeSpendingPace(
+    targetAmount: goal.targetAmount,
+    cycle: cycle,
+    spent: progress,
+    now: now,
+  ).isOverLimit;
 }
 
 class GoalDayPoint {
@@ -72,7 +198,9 @@ class GoalDayContribution {
   const GoalDayContribution({required this.income, required this.expense});
 
   double deltaFor(GoalDirection direction) {
-    return direction == GoalDirection.spendingLimit ? expense : income - expense;
+    return direction == GoalDirection.spendingLimit
+        ? expense
+        : income - expense;
   }
 }
 
@@ -151,8 +279,15 @@ class GoalEngine {
     );
   }
 
-  Future<({DateTimeRange cycle, double totalIncome, double totalExpenses, List<GoalDayPoint> days})>
-      buildSeries(Goal goal, {DateTime? asOf}) async {
+  Future<
+    ({
+      DateTimeRange cycle,
+      double totalIncome,
+      double totalExpenses,
+      List<GoalDayPoint> days,
+    })
+  >
+  buildSeries(Goal goal, {DateTime? asOf}) async {
     final cycle = goal.currentCycle(now: asOf).range;
     final excludedIds = goal.excludedTagIds.toSet();
     final ordered = await _calendarDays();
@@ -190,7 +325,9 @@ class GoalEngine {
         totalExpenses += contribution.expense;
         final daily = contribution.deltaFor(goal.direction);
         cumulative += daily;
-        points.add(GoalDayPoint(date: day.date, dailyDelta: daily, progress: cumulative));
+        points.add(
+          GoalDayPoint(date: day.date, dailyDelta: daily, progress: cumulative),
+        );
       }
     }
 
@@ -239,14 +376,16 @@ class GoalEngine {
     for (final row in rows) {
       final dayId = row['dayId'] as int;
       final type = TagTypeDb.fromDb(row['type'] as String);
-      out.putIfAbsent(dayId, () => []).add(
-        GoalTaggedAmount(
-          tagId: row['tagId'] as int,
-          income: type == TagType.income,
-          amount: (row['amount'] as num).toDouble(),
-          autoBalanced: ((row['autoBalanced'] as num?) ?? 0) > 0,
-        ),
-      );
+      out
+          .putIfAbsent(dayId, () => [])
+          .add(
+            GoalTaggedAmount(
+              tagId: row['tagId'] as int,
+              income: type == TagType.income,
+              amount: (row['amount'] as num).toDouble(),
+              autoBalanced: ((row['autoBalanced'] as num?) ?? 0) > 0,
+            ),
+          );
     }
     return out;
   }
@@ -256,7 +395,11 @@ class GoalEngine {
     Set<int> excludedIds,
   ) async {
     final db = await _storage.database;
-    final start = DateTime(cycle.start.year, cycle.start.month, cycle.start.day);
+    final start = DateTime(
+      cycle.start.year,
+      cycle.start.month,
+      cycle.start.day,
+    );
     final end = DateTime(cycle.end.year, cycle.end.month, cycle.end.day);
     final rows = await db.query(
       'total_money_days',
@@ -275,7 +418,9 @@ class GoalEngine {
       orderBy: 'date DESC',
       limit: 1,
     );
-    double? previous = prevRows.isNotEmpty ? (prevRows.first['totalAmount'] as num).toDouble() : null;
+    double? previous = prevRows.isNotEmpty
+        ? (prevRows.first['totalAmount'] as num).toDouble()
+        : null;
 
     final dropsByDay = <DateTime, double>{};
     var balanceDrops = 0.0;
@@ -319,20 +464,28 @@ class GoalEngine {
     for (final date in dates) {
       final daily = dropsByDay[date] ?? 0;
       cumulative += daily;
-      points.add(GoalDayPoint(date: date, dailyDelta: daily, progress: cumulative));
+      points.add(
+        GoalDayPoint(date: date, dailyDelta: daily, progress: cumulative),
+      );
     }
     final remainder = expense - cumulative;
     if (points.isNotEmpty && remainder.abs() > 0.0000001) {
       final last = points.removeLast();
       final daily = last.dailyDelta + remainder;
-      points.add(GoalDayPoint(date: last.date, dailyDelta: daily, progress: expense));
+      points.add(
+        GoalDayPoint(date: last.date, dailyDelta: daily, progress: expense),
+      );
     }
 
     return (expense: expense, days: points);
   }
 
   bool _inCycle(DateTime day, DateTimeRange cycle) {
-    final start = DateTime(cycle.start.year, cycle.start.month, cycle.start.day);
+    final start = DateTime(
+      cycle.start.year,
+      cycle.start.month,
+      cycle.start.day,
+    );
     final end = DateTime(cycle.end.year, cycle.end.month, cycle.end.day);
     return !day.isBefore(start) && day.isBefore(end);
   }
