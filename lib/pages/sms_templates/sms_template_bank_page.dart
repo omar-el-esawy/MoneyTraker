@@ -120,49 +120,13 @@ class _SmsTemplateBankPageState extends State<SmsTemplateBankPage> {
   Future<void> _addSender() async {
     final bank = _bank;
     if (bank == null) return;
-    final controller = TextEditingController();
-    final save = await showModalBottomSheet<bool>(
+    final value = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (context) => Padding(
-        padding: EdgeInsets.fromLTRB(
-          20,
-          0,
-          20,
-          MediaQuery.viewInsetsOf(context).bottom + 24,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Add sender ID',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 8),
-            const Text('It must exactly match the sender shown by Android.'),
-            const SizedBox(height: 16),
-            TextField(
-              controller: controller,
-              autofocus: true,
-              decoration: const InputDecoration(hintText: 'Example: MYBANK'),
-            ),
-            const SizedBox(height: 18),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Add sender'),
-              ),
-            ),
-          ],
-        ),
-      ),
+      builder: (context) => const _AddSenderSheet(),
     );
-    final value = controller.text.trim();
-    controller.dispose();
-    if (save != true ||
+    if (value == null ||
         value.isEmpty ||
         bank.senders.any((item) => item.toLowerCase() == value.toLowerCase())) {
       return;
@@ -559,6 +523,63 @@ class _ActionCard extends StatelessWidget {
             Text(subtitle, textAlign: TextAlign.center),
             const SizedBox(height: 14),
             FilledButton(onPressed: onTap, child: Text(action)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AddSenderSheet extends StatefulWidget {
+  const _AddSenderSheet();
+
+  @override
+  State<_AddSenderSheet> createState() => _AddSenderSheetState();
+}
+
+class _AddSenderSheetState extends State<_AddSenderSheet> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(20, 0, 20, bottomInset + 24),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Add sender ID',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            const Text('It must exactly match the sender shown by Android.'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _controller,
+              autofocus: true,
+              decoration: const InputDecoration(hintText: 'Example: MYBANK'),
+            ),
+            const SizedBox(height: 18),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () {
+                  final value = _controller.text.trim();
+                  FocusManager.instance.primaryFocus?.unfocus();
+                  Navigator.pop(context, value);
+                },
+                child: const Text('Add sender'),
+              ),
+            ),
           ],
         ),
       ),

@@ -122,10 +122,6 @@ class _SmsTemplatesPageState extends State<SmsTemplatesPage> {
   }
 
   Future<void> _addBank() async {
-    final name = TextEditingController();
-    final sender = TextEditingController();
-    int? selectedSourceId;
-    String? selectedPresetId;
     final availablePresets = SmsTemplateBankPreset.all.where((preset) {
       return !_banks.any(
         (bank) =>
@@ -133,164 +129,35 @@ class _SmsTemplatesPageState extends State<SmsTemplatesPage> {
             bank.name.trim().toLowerCase() == preset.name.toLowerCase(),
       );
     }).toList();
-    if (availablePresets.isEmpty) {
-      selectedPresetId = SmsTemplateBankPreset.customId;
-    }
 
-    final save = await showModalBottomSheet<bool>(
+    final result = await showModalBottomSheet<_AddBankResult>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setSheetState) {
-          final isCustom = selectedPresetId == SmsTemplateBankPreset.customId;
-          final selectedPreset = availablePresets
-              .where((item) => item.id == selectedPresetId)
-              .firstOrNull;
-          final canSave =
-              selectedSourceId != null &&
-              selectedPresetId != null &&
-              (selectedPreset != null ||
-                  (isCustom &&
-                      name.text.trim().isNotEmpty &&
-                      sender.text.trim().isNotEmpty));
-          return Padding(
-            padding: EdgeInsets.fromLTRB(
-              20,
-              0,
-              20,
-              MediaQuery.viewInsetsOf(context).bottom + 24,
-            ),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight: MediaQuery.sizeOf(context).height * .75,
-              ),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Add a bank',
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    const SizedBox(height: 16),
-                    DropdownButtonFormField<String>(
-                      initialValue: selectedPresetId,
-                      decoration: const InputDecoration(
-                        labelText: 'Bank',
-                        helperText:
-                            'Choose a known bank or create a custom one.',
-                      ),
-                      items: [
-                        for (final preset in availablePresets)
-                          DropdownMenuItem(
-                            value: preset.id,
-                            child: Text(preset.name),
-                          ),
-                        const DropdownMenuItem(
-                          value: SmsTemplateBankPreset.customId,
-                          child: Text('Custom bank'),
-                        ),
-                      ],
-                      onChanged: (value) {
-                        setSheetState(() => selectedPresetId = value);
-                      },
-                    ),
-                    if (selectedPreset != null) ...[
-                      const SizedBox(height: 12),
-                      Text(
-                        'Sender IDs: ${selectedPreset.senders.join(', ')}',
-                        style: const TextStyle(
-                          color: AppConstants.textSecondary,
-                        ),
-                      ),
-                    ],
-                    if (isCustom) ...[
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: name,
-                        autofocus: true,
-                        onChanged: (_) => setSheetState(() {}),
-                        decoration: const InputDecoration(
-                          labelText: 'Bank name',
-                          hintText: 'Example: My Bank',
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: sender,
-                        onChanged: (_) => setSheetState(() {}),
-                        decoration: const InputDecoration(
-                          labelText: 'Exact sender ID',
-                          hintText: 'Example: MYBANK',
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<int>(
-                      initialValue: selectedSourceId,
-                      decoration: InputDecoration(
-                        labelText: 'Money source',
-                        helperText: _sources.isEmpty
-                            ? 'Create a money source before adding a bank.'
-                            : 'Required before rules can be created.',
-                      ),
-                      items: [
-                        for (final source in _sources)
-                          if (source.id != null)
-                            DropdownMenuItem(
-                              value: source.id,
-                              child: Text(
-                                '${source.name} • ${source.amount.toStringAsFixed(2)}',
-                              ),
-                            ),
-                      ],
-                      onChanged: _sources.isEmpty
-                          ? null
-                          : (value) =>
-                                setSheetState(() => selectedSourceId = value),
-                    ),
-                    const SizedBox(height: 20),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton(
-                        onPressed: canSave
-                            ? () => Navigator.pop(context, true)
-                            : null,
-                        child: const Text('Add bank'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
+      builder: (context) => _AddBankSheet(
+        presets: availablePresets,
+        sources: _sources,
+        initialPresetId: availablePresets.isEmpty
+            ? SmsTemplateBankPreset.customId
+            : null,
       ),
     );
-    final customName = name.text.trim();
-    final customSender = sender.text.trim();
-    name.dispose();
-    sender.dispose();
-    if (save != true || selectedSourceId == null || selectedPresetId == null) {
-      return;
-    }
+    if (result == null || !mounted) return;
     final preset = availablePresets
-        .where((item) => item.id == selectedPresetId)
+        .where((item) => item.id == result.presetId)
         .firstOrNull;
-    final isCustom = selectedPresetId == SmsTemplateBankPreset.customId;
+    final isCustom = result.presetId == SmsTemplateBankPreset.customId;
     if (preset == null &&
-        (!isCustom || customName.isEmpty || customSender.isEmpty)) {
+        (!isCustom || result.name.isEmpty || result.sender.isEmpty)) {
       return;
     }
     final bank = SmsTemplateBank(
       id: preset == null
           ? 'sms_v2_${DateTime.now().microsecondsSinceEpoch}'
           : 'sms_v2_${preset.id}',
-      name: preset?.name ?? customName,
-      senders: preset?.senders ?? [customSender],
-      sourceId: selectedSourceId,
+      name: preset?.name ?? result.name,
+      senders: preset?.senders ?? [result.sender],
+      sourceId: result.sourceId,
       createdAt: DateTime.now(),
     );
     await _store.saveBank(bank);
@@ -618,6 +485,186 @@ class _BankCard extends StatelessWidget {
                 ),
               ),
               const Icon(Icons.chevron_right, color: AppConstants.textTertiary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AddBankResult {
+  final String presetId;
+  final int sourceId;
+  final String name;
+  final String sender;
+
+  const _AddBankResult({
+    required this.presetId,
+    required this.sourceId,
+    required this.name,
+    required this.sender,
+  });
+}
+
+class _AddBankSheet extends StatefulWidget {
+  final List<SmsTemplateBankPreset> presets;
+  final List<MoneySource> sources;
+  final String? initialPresetId;
+
+  const _AddBankSheet({
+    required this.presets,
+    required this.sources,
+    required this.initialPresetId,
+  });
+
+  @override
+  State<_AddBankSheet> createState() => _AddBankSheetState();
+}
+
+class _AddBankSheetState extends State<_AddBankSheet> {
+  final _name = TextEditingController();
+  final _sender = TextEditingController();
+  String? _presetId;
+  int? _sourceId;
+
+  @override
+  void initState() {
+    super.initState();
+    _presetId = widget.initialPresetId;
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _sender.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isCustom = _presetId == SmsTemplateBankPreset.customId;
+    final selectedPreset = widget.presets
+        .where((item) => item.id == _presetId)
+        .firstOrNull;
+    final name = _name.text.trim();
+    final sender = _sender.text.trim();
+    final canSave =
+        _sourceId != null &&
+        _presetId != null &&
+        (selectedPreset != null ||
+            (isCustom && name.isNotEmpty && sender.isNotEmpty));
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    final screenHeight = MediaQuery.sizeOf(context).height;
+    final maxHeight = (screenHeight - bottomInset - 24).clamp(
+      0.0,
+      screenHeight * .75,
+    );
+    return Padding(
+      padding: EdgeInsets.fromLTRB(20, 0, 20, bottomInset + 24),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: maxHeight),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Add a bank', style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                initialValue: _presetId,
+                decoration: const InputDecoration(
+                  labelText: 'Bank',
+                  helperText: 'Choose a known bank or create a custom one.',
+                ),
+                items: [
+                  for (final preset in widget.presets)
+                    DropdownMenuItem(
+                      value: preset.id,
+                      child: Text(preset.name),
+                    ),
+                  const DropdownMenuItem(
+                    value: SmsTemplateBankPreset.customId,
+                    child: Text('Custom bank'),
+                  ),
+                ],
+                onChanged: (value) => setState(() => _presetId = value),
+              ),
+              if (selectedPreset != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  'Sender IDs: ${selectedPreset.senders.join(', ')}',
+                  style: const TextStyle(color: AppConstants.textSecondary),
+                ),
+              ],
+              if (isCustom) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _name,
+                  autofocus: true,
+                  onChanged: (_) => setState(() {}),
+                  decoration: const InputDecoration(
+                    labelText: 'Bank name',
+                    hintText: 'Example: My Bank',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _sender,
+                  onChanged: (_) => setState(() {}),
+                  decoration: const InputDecoration(
+                    labelText: 'Exact sender ID',
+                    hintText: 'Example: MYBANK',
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              DropdownButtonFormField<int>(
+                initialValue: _sourceId,
+                decoration: InputDecoration(
+                  labelText: 'Money source',
+                  helperText: widget.sources.isEmpty
+                      ? 'Create a money source before adding a bank.'
+                      : 'Required before rules can be created.',
+                ),
+                items: [
+                  for (final source in widget.sources)
+                    if (source.id != null)
+                      DropdownMenuItem(
+                        value: source.id,
+                        child: Text(
+                          '${source.name} • ${source.amount.toStringAsFixed(2)}',
+                        ),
+                      ),
+                ],
+                onChanged: widget.sources.isEmpty
+                    ? null
+                    : (value) => setState(() => _sourceId = value),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: canSave
+                      ? () {
+                          final sourceId = _sourceId;
+                          final presetId = _presetId;
+                          if (sourceId == null || presetId == null) return;
+                          FocusManager.instance.primaryFocus?.unfocus();
+                          Navigator.pop(
+                            context,
+                            _AddBankResult(
+                              presetId: presetId,
+                              sourceId: sourceId,
+                              name: _name.text.trim(),
+                              sender: _sender.text.trim(),
+                            ),
+                          );
+                        }
+                      : null,
+                  child: const Text('Add bank'),
+                ),
+              ),
             ],
           ),
         ),
