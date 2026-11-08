@@ -11,7 +11,7 @@ class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._();
 
   static const _dbName = 'money_traker_sms.db';
-  static const _dbVersion = 9;
+  static const _dbVersion = 10;
 
   Database? _database;
 
@@ -43,8 +43,12 @@ class DatabaseHelper {
             rule_version INTEGER
           )
         ''');
-        await db.execute('CREATE INDEX idx_transactions_date ON transactions(date)');
-        await db.execute('CREATE INDEX idx_transactions_sms_id ON transactions(sms_id)');
+        await db.execute(
+          'CREATE INDEX idx_transactions_date ON transactions(date)',
+        );
+        await db.execute(
+          'CREATE INDEX idx_transactions_sms_id ON transactions(sms_id)',
+        );
 
         await db.execute('''
           CREATE TABLE processed_sms (
@@ -69,6 +73,7 @@ class DatabaseHelper {
         await _addCategoryColumns(db);
         await _addSourceAppliedColumn(db);
         await _createRawSmsAndVersioning(db);
+        await _createSmsTemplateV2Tables(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -118,6 +123,9 @@ class DatabaseHelper {
         if (oldVersion < 9) {
           await _addRulePatternColumns(db);
         }
+        if (oldVersion < 10) {
+          await _createSmsTemplateV2Tables(db);
+        }
       },
     );
   }
@@ -150,7 +158,9 @@ class DatabaseHelper {
         date: DateTime.fromMillisecondsSinceEpoch((row['date'] as int?) ?? 0),
         bankId: row['bank_id'] as String? ?? '',
         status: SmsCopyStatus.pending,
-        copiedAt: DateTime.fromMillisecondsSinceEpoch((row['copied_at'] as int?) ?? 0),
+        copiedAt: DateTime.fromMillisecondsSinceEpoch(
+          (row['copied_at'] as int?) ?? 0,
+        ),
       );
     }).toList();
   }
@@ -163,18 +173,14 @@ class DatabaseHelper {
 
   Future<void> deleteStoredSmsBefore(DateTime date) async {
     final db = await database;
-    final boundary = DateTime(date.year, date.month, date.day).millisecondsSinceEpoch;
+    final boundary = DateTime(
+      date.year,
+      date.month,
+      date.day,
+    ).millisecondsSinceEpoch;
     await db.transaction((txn) async {
-      await txn.delete(
-        'sms_copies',
-        where: 'date < ?',
-        whereArgs: [boundary],
-      );
-      await txn.delete(
-        'raw_sms',
-        where: 'date < ?',
-        whereArgs: [boundary],
-      );
+      await txn.delete('sms_copies', where: 'date < ?', whereArgs: [boundary]);
+      await txn.delete('raw_sms', where: 'date < ?', whereArgs: [boundary]);
     });
   }
 
@@ -262,7 +268,8 @@ class DatabaseHelper {
       final id = item.id;
       final samePattern = item.pattern?.key == rule.pattern?.key;
       final sameLegacyWord =
-          item.pattern == null && rule.pattern == null &&
+          item.pattern == null &&
+          rule.pattern == null &&
           item.word.toLowerCase() == rule.word.toLowerCase();
       if (id != null && (samePattern || sameLegacyWord)) {
         await deleteSmsCategoryRule(id);
@@ -379,13 +386,17 @@ class DatabaseHelper {
     return TransactionEntity.fromMap(rows.first);
   }
 
-  Future<TransactionEntity> upsertTransaction(TransactionEntity transaction) async {
+  Future<TransactionEntity> upsertTransaction(
+    TransactionEntity transaction,
+  ) async {
     final hash = transaction.smsHash;
     TransactionEntity? existing;
     if (hash != null && hash.isNotEmpty) {
       existing = await getTransactionByHash(hash);
     }
-    existing ??= transaction.smsId == null ? null : await getTransactionBySmsId(transaction.smsId!);
+    existing ??= transaction.smsId == null
+        ? null
+        : await getTransactionBySmsId(transaction.smsId!);
     if (existing == null) {
       final id = await insertTransaction(transaction);
       return transaction.copyWith(id: id);
@@ -394,11 +405,17 @@ class DatabaseHelper {
       id: existing.id,
       categoryTagId: transaction.categoryTagId ?? existing.categoryTagId,
       categoryAmount: transaction.categoryAmount ?? existing.categoryAmount,
-      categoryAllocations: transaction.categoryAllocations ?? existing.categoryAllocations,
+      categoryAllocations:
+          transaction.categoryAllocations ?? existing.categoryAllocations,
     );
     final db = await database;
     final map = merged.toMap()..remove('id');
-    await db.update('transactions', map, where: 'id = ?', whereArgs: [existing.id]);
+    await db.update(
+      'transactions',
+      map,
+      where: 'id = ?',
+      whereArgs: [existing.id],
+    );
     return merged;
   }
 
@@ -406,6 +423,11 @@ class DatabaseHelper {
     final db = await database;
     final rows = await db.query('transactions', orderBy: 'date DESC');
     return rows.map(TransactionEntity.fromMap).toList();
+  }
+
+  Future<void> deleteTransactionByHash(String hash) async {
+    final db = await database;
+    await db.delete('transactions', where: 'sms_hash = ?', whereArgs: [hash]);
   }
 
   Future<TransactionEntity?> getOldestTransaction() async {
@@ -429,14 +451,10 @@ class DatabaseHelper {
 
   Future<void> markAsProcessed(String smsId) async {
     final db = await database;
-    await db.insert(
-      'processed_sms',
-      {
-        'sms_id': smsId,
-        'processed_at': DateTime.now().millisecondsSinceEpoch,
-      },
-      conflictAlgorithm: ConflictAlgorithm.ignore,
-    );
+    await db.insert('processed_sms', {
+      'sms_id': smsId,
+      'processed_at': DateTime.now().millisecondsSinceEpoch,
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
   Future<void> insertFailedSms(FailedSms failedSms) async {
@@ -455,6 +473,10 @@ class DatabaseHelper {
     'sms_type_words',
     'sms_category_rules',
     'raw_sms',
+    'sms_template_banks_v2',
+    'sms_templates_v2',
+    'sms_template_messages_v2',
+    'sms_template_applications_v2',
   ];
 
   Future<Map<String, dynamic>> exportSmsTables() async {
@@ -469,21 +491,30 @@ class DatabaseHelper {
   Future<void> importSmsTables(Map<String, dynamic> sms) async {
     final db = await database;
     await db.transaction((txn) async {
-      for (final table in smsBackupTables) {
+      final importedTables = [
+        for (final table in smsBackupTables)
+          if (sms[table] is List) table,
+      ];
+      for (final table in importedTables) {
         await txn.delete(table);
       }
       final sequence = await txn.rawQuery(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'",
       );
       if (sequence.isNotEmpty) {
-        final placeholders = List.filled(smsBackupTables.length, '?').join(',');
-        await txn.delete(
-          'sqlite_sequence',
-          where: 'name IN ($placeholders)',
-          whereArgs: smsBackupTables,
-        );
+        if (importedTables.isNotEmpty) {
+          final placeholders = List.filled(
+            importedTables.length,
+            '?',
+          ).join(',');
+          await txn.delete(
+            'sqlite_sequence',
+            where: 'name IN ($placeholders)',
+            whereArgs: importedTables,
+          );
+        }
       }
-      for (final table in smsBackupTables) {
+      for (final table in importedTables) {
         final rows = sms[table];
         if (rows is! List) continue;
         for (final row in rows) {
@@ -579,7 +610,9 @@ Future<void> _createRawSmsAndVersioning(Database db) async {
     await db.execute('ALTER TABLE transactions ADD COLUMN rule_id TEXT');
   }
   if (!names.contains('rule_version')) {
-    await db.execute('ALTER TABLE transactions ADD COLUMN rule_version INTEGER');
+    await db.execute(
+      'ALTER TABLE transactions ADD COLUMN rule_version INTEGER',
+    );
   }
 
   final copies = await db.query('sms_copies');
@@ -588,19 +621,15 @@ Future<void> _createRawSmsAndVersioning(Database db) async {
     final body = row['body'] as String? ?? '';
     final smsId = row['sms_id'] as String? ?? '';
     final hash = SmsHash.of(smsId: smsId, sender: sender, body: body);
-    await db.insert(
-      'raw_sms',
-      {
-        'sms_hash': hash,
-        'sms_id': smsId,
-        'sender': sender,
-        'body': body,
-        'date': row['date'] ?? 0,
-        'bank_id': row['bank_id'] ?? '',
-        'copied_at': row['copied_at'] ?? 0,
-      },
-      conflictAlgorithm: ConflictAlgorithm.ignore,
-    );
+    await db.insert('raw_sms', {
+      'sms_hash': hash,
+      'sms_id': smsId,
+      'sender': sender,
+      'body': body,
+      'date': row['date'] ?? 0,
+      'bank_id': row['bank_id'] ?? '',
+      'copied_at': row['copied_at'] ?? 0,
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
     if (smsId.isNotEmpty) {
       await db.update(
         'transactions',
@@ -630,20 +659,20 @@ Future<void> _createRawSmsAndVersioning(Database db) async {
 
 Future<void> _upsertRawSms(SmsCopy copy) async {
   final db = await DatabaseHelper.instance.database;
-  final hash = SmsHash.of(smsId: copy.smsId, sender: copy.sender, body: copy.body);
-  await db.insert(
-    'raw_sms',
-    {
-      'sms_hash': hash,
-      'sms_id': copy.smsId,
-      'sender': copy.sender,
-      'body': copy.body,
-      'date': copy.date.millisecondsSinceEpoch,
-      'bank_id': copy.bankId,
-      'copied_at': copy.copiedAt.millisecondsSinceEpoch,
-    },
-    conflictAlgorithm: ConflictAlgorithm.replace,
+  final hash = SmsHash.of(
+    smsId: copy.smsId,
+    sender: copy.sender,
+    body: copy.body,
   );
+  await db.insert('raw_sms', {
+    'sms_hash': hash,
+    'sms_id': copy.smsId,
+    'sender': copy.sender,
+    'body': copy.body,
+    'date': copy.date.millisecondsSinceEpoch,
+    'bank_id': copy.bankId,
+    'copied_at': copy.copiedAt.millisecondsSinceEpoch,
+  }, conflictAlgorithm: ConflictAlgorithm.replace);
 }
 
 Future<void> _createSmsCategoryRuleTable(Database db) async {
@@ -687,13 +716,19 @@ Future<void> _addCategoryColumns(Database db) async {
   final cols = await db.rawQuery("PRAGMA table_info('transactions')");
   final names = cols.map((c) => c['name'] as String?).toSet();
   if (!names.contains('category_tag_id')) {
-    await db.execute('ALTER TABLE transactions ADD COLUMN category_tag_id INTEGER');
+    await db.execute(
+      'ALTER TABLE transactions ADD COLUMN category_tag_id INTEGER',
+    );
   }
   if (!names.contains('category_amount')) {
-    await db.execute('ALTER TABLE transactions ADD COLUMN category_amount REAL');
+    await db.execute(
+      'ALTER TABLE transactions ADD COLUMN category_amount REAL',
+    );
   }
   if (!names.contains('category_allocations')) {
-    await db.execute('ALTER TABLE transactions ADD COLUMN category_allocations TEXT');
+    await db.execute(
+      'ALTER TABLE transactions ADD COLUMN category_allocations TEXT',
+    );
   }
 }
 
@@ -706,4 +741,70 @@ Future<void> _addReadingColumns(Database db) async {
   if (!names.contains('account_hint')) {
     await db.execute('ALTER TABLE transactions ADD COLUMN account_hint TEXT');
   }
+}
+
+Future<void> _createSmsTemplateV2Tables(Database db) async {
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS sms_template_banks_v2 (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      senders_json TEXT NOT NULL,
+      source_id INTEGER,
+      created_at INTEGER NOT NULL
+    )
+  ''');
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS sms_templates_v2 (
+      id TEXT PRIMARY KEY,
+      bank_id TEXT NOT NULL,
+      template_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )
+  ''');
+  await db.execute(
+    'CREATE INDEX IF NOT EXISTS idx_sms_templates_v2_bank '
+    'ON sms_templates_v2(bank_id)',
+  );
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS sms_template_messages_v2 (
+      sms_hash TEXT PRIMARY KEY,
+      sms_id TEXT,
+      sender TEXT NOT NULL,
+      body TEXT NOT NULL,
+      date INTEGER NOT NULL,
+      bank_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      template_id TEXT,
+      copied_at INTEGER NOT NULL
+    )
+  ''');
+  await db.execute(
+    'CREATE INDEX IF NOT EXISTS idx_sms_template_messages_v2_bank '
+    'ON sms_template_messages_v2(bank_id, date DESC)',
+  );
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS sms_template_applications_v2 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sms_hash TEXT NOT NULL UNIQUE,
+      sms_id TEXT,
+      bank_id TEXT NOT NULL,
+      bank_name TEXT NOT NULL,
+      template_id TEXT NOT NULL,
+      source_id INTEGER NOT NULL,
+      source_name TEXT NOT NULL,
+      amount REAL NOT NULL,
+      delta REAL NOT NULL,
+      before_amount REAL NOT NULL,
+      after_amount REAL NOT NULL,
+      occurred_at INTEGER NOT NULL,
+      raw_sms TEXT NOT NULL,
+      undone INTEGER NOT NULL DEFAULT 0,
+      undone_at INTEGER,
+      created_at INTEGER NOT NULL
+    )
+  ''');
+  await db.execute(
+    'CREATE INDEX IF NOT EXISTS idx_sms_template_applications_v2_date '
+    'ON sms_template_applications_v2(occurred_at DESC)',
+  );
 }

@@ -121,10 +121,15 @@ class SmsRuleEngine {
     for (final selected in pattern.words) {
       if (selected.index >= tokens.length) return null;
       final actual = normalizeWord(tokens[selected.index].text);
-      if (actual.toLowerCase() != selected.word.trim().toLowerCase()) return null;
+      if (actual.toLowerCase() != selected.word.trim().toLowerCase())
+        return null;
     }
-    final first = pattern.words.map((word) => word.index).reduce((a, b) => a < b ? a : b);
-    final last = pattern.words.map((word) => word.index).reduce((a, b) => a > b ? a : b);
+    final first = pattern.words
+        .map((word) => word.index)
+        .reduce((a, b) => a < b ? a : b);
+    final last = pattern.words
+        .map((word) => word.index)
+        .reduce((a, b) => a > b ? a : b);
     return (start: tokens[first].start, end: tokens[last].end);
   }
 
@@ -159,8 +164,18 @@ class SmsRuleEngine {
     double? amount;
     double? balance;
     String? account;
+    SmsReadRule? matchedAmountRule;
 
-    for (final rule in rules) {
+    final rankedRules = [...rules]
+      ..sort((a, b) {
+        final bySpecificity = _ruleSpecificity(
+          b,
+        ).compareTo(_ruleSpecificity(a));
+        if (bySpecificity != 0) return bySpecificity;
+        return b.createdAt.compareTo(a.createdAt);
+      });
+
+    for (final rule in rankedRules) {
       final raw = extract(body, rule);
       if (raw == null) continue;
       switch (rule.field) {
@@ -168,21 +183,20 @@ class SmsRuleEngine {
           final value = parseAmount(raw);
           if (value == null || amount != null) break;
           amount = value;
+          matchedAmountRule = rule;
         case SmsField.balance:
-          balance ??= parseAmount(raw);
+          final value = parseAmount(raw);
+          if (value == null || balance != null) break;
+          balance = value;
         case SmsField.account:
-          account ??= normalizeDigits(raw);
+          if (account != null) break;
+          account = normalizeDigits(raw);
       }
     }
 
     var typeHint = detectType(body, typeWords);
-    if (typeHint.isEmpty) {
-      for (final rule in rules) {
-        if (rule.field == SmsField.amount && rule.typeHint.isNotEmpty) {
-          typeHint = rule.typeHint;
-          break;
-        }
-      }
+    if (typeHint.isEmpty && matchedAmountRule != null) {
+      typeHint = matchedAmountRule.typeHint;
     }
 
     return SmsReading(
@@ -194,12 +208,19 @@ class SmsRuleEngine {
   }
 
   static String? extract(String body, SmsReadRule rule) {
-    if (rule.prefix.isEmpty && rule.suffix.isEmpty) return null;
-    if (rule.prefix.isEmpty || rule.suffix.isEmpty) return null;
-    final pattern = RegExp(
-      '${_flex(rule.prefix)}\\s*($_capture)\\s*${_flex(rule.suffix)}',
-      caseSensitive: false,
-    );
+    final prefix = rule.prefix.trim();
+    final suffix = rule.suffix.trim();
+    if (prefix.isEmpty && suffix.isEmpty) return null;
+    if ((prefix.isEmpty || suffix.isEmpty) &&
+        _letterCount('$prefix$suffix') < 3) {
+      return null;
+    }
+    final source = switch ((prefix.isEmpty, suffix.isEmpty)) {
+      (true, false) => '($_capture)\\s*${_flex(suffix)}',
+      (false, true) => '${_flex(prefix)}\\s*($_capture)',
+      _ => '${_flex(prefix)}\\s*($_capture)\\s*${_flex(suffix)}',
+    };
+    final pattern = RegExp(source, caseSensitive: false);
     return pattern.firstMatch(body)?.group(1);
   }
 
@@ -222,6 +243,12 @@ class SmsRuleEngine {
       final thousands =
           pieces.length > 1 && pieces.skip(1).every((p) => p.length == 3);
       text = thousands ? text.replaceAll(',', '') : text.replaceAll(',', '.');
+    } else if (hasDot) {
+      final pieces = text.split('.');
+      if (pieces.length > 2 &&
+          pieces.skip(1).every((piece) => piece.length == 3)) {
+        text = text.replaceAll('.', '');
+      }
     }
     return double.tryParse(text);
   }
@@ -328,6 +355,12 @@ class SmsRuleEngine {
 
   static int amountRuleLetterCount(SmsReadRule rule) {
     return _letterCount('${rule.prefix}${rule.suffix}');
+  }
+
+  static int _ruleSpecificity(SmsReadRule rule) {
+    final bothSides =
+        rule.prefix.trim().isNotEmpty && rule.suffix.trim().isNotEmpty;
+    return amountRuleLetterCount(rule) * 2 + (bothSides ? 1 : 0);
   }
 
   static int fixedLetterCount({

@@ -1,9 +1,11 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:money_traker/constants/app_constants.dart';
 import 'package:money_traker/data/database_helper.dart';
 import 'package:money_traker/model/money_source.dart';
 import 'package:money_traker/pages/sms/bank_detail_page.dart';
+import 'package:money_traker/pages/sms/web_sms_template_demo_page.dart';
 import 'package:money_traker/services/sms_feature_store.dart';
 import 'package:money_traker/services/sync_service.dart';
 import 'package:money_traker/sms/sms_models.dart';
@@ -33,7 +35,7 @@ class _BankMessagesPageState extends State<BankMessagesPage> {
   @override
   void initState() {
     super.initState();
-    _load();
+    if (!kIsWeb) _load();
   }
 
   Future<void> _load() async {
@@ -93,16 +95,18 @@ class _BankMessagesPageState extends State<BankMessagesPage> {
     } else if (!result.permissionGranted) {
       _snack(strings.permissionDenied);
     } else {
-      _snack(strings.resultLine(
-        copied: result.copied,
-        parsed: result.parsed,
-        appliedToSource: result.appliedToSource,
-        skipped: result.skipped,
-        unmatched: result.unmatched,
-        missingSource: result.missingSource,
-        updated: result.updated,
-        error: result.error,
-      ));
+      _snack(
+        strings.resultLine(
+          copied: result.copied,
+          parsed: result.parsed,
+          appliedToSource: result.appliedToSource,
+          skipped: result.skipped,
+          unmatched: result.unmatched,
+          missingSource: result.missingSource,
+          updated: result.updated,
+          error: result.error,
+        ),
+      );
     }
   }
 
@@ -122,14 +126,29 @@ class _BankMessagesPageState extends State<BankMessagesPage> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(controller: nameEn, decoration: InputDecoration(labelText: strings.nameEn)),
-              TextField(controller: nameAr, decoration: InputDecoration(labelText: strings.nameAr)),
-              TextField(controller: sender, decoration: InputDecoration(labelText: strings.senderHint)),
+              TextField(
+                controller: nameEn,
+                decoration: InputDecoration(labelText: strings.nameEn),
+              ),
+              TextField(
+                controller: nameAr,
+                decoration: InputDecoration(labelText: strings.nameAr),
+              ),
+              TextField(
+                controller: sender,
+                decoration: InputDecoration(labelText: strings.senderHint),
+              ),
             ],
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(strings.cancel)),
-            FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(strings.save)),
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(strings.cancel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(strings.save),
+            ),
           ],
         ),
       ),
@@ -141,21 +160,25 @@ class _BankMessagesPageState extends State<BankMessagesPage> {
     nameAr.dispose();
     sender.dispose();
     if (saved != true || en.isEmpty || senderName.isEmpty) return;
-    await _save(config.copyWith(banks: [
-      ...config.banks,
-      BankConfig(
-        id: 'bank_${DateTime.now().millisecondsSinceEpoch}',
-        nameEn: en,
-        nameAr: ar.isEmpty ? en : ar,
-        senders: [senderName],
+    await _save(
+      config.copyWith(
+        banks: [
+          ...config.banks,
+          BankConfig(
+            id: 'bank_${DateTime.now().millisecondsSinceEpoch}',
+            nameEn: en,
+            nameAr: ar.isEmpty ? en : ar,
+            senders: [senderName],
+          ),
+        ],
       ),
-    ]));
+    );
   }
 
   Future<void> _openBank(BankConfig bank) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => BankDetailPage(bankId: bank.id)),
-    );
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => BankDetailPage(bankId: bank.id)));
     await _load();
   }
 
@@ -171,6 +194,7 @@ class _BankMessagesPageState extends State<BankMessagesPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (kIsWeb) return const WebSmsTemplateDemoPage();
     final config = _config;
     if (_loading || config == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
@@ -187,7 +211,11 @@ class _BankMessagesPageState extends State<BankMessagesPage> {
             TextButton(
               onPressed: _busy
                   ? null
-                  : () => _save(config.copyWith(languageCode: config.arabic ? 'en' : 'ar')),
+                  : () => _save(
+                      config.copyWith(
+                        languageCode: config.arabic ? 'en' : 'ar',
+                      ),
+                    ),
               child: Text(strings.language),
             ),
           ],
@@ -197,17 +225,27 @@ class _BankMessagesPageState extends State<BankMessagesPage> {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              Text(strings.intro, style: const TextStyle(color: AppConstants.textSecondary)),
+              Text(
+                strings.intro,
+                style: const TextStyle(color: AppConstants.textSecondary),
+              ),
               const SizedBox(height: 16),
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.event),
                 title: Text(strings.startDate),
-                subtitle: Text(config.startDate == null ? strings.pickDate : _fmt(config.startDate!)),
+                subtitle: Text(
+                  config.startDate == null
+                      ? strings.pickDate
+                      : _fmt(config.startDate!),
+                ),
                 onTap: _pickDate,
               ),
               const SizedBox(height: 8),
-              Text(strings.applyFromStartHint, style: const TextStyle(color: AppConstants.textSecondary)),
+              Text(
+                strings.applyFromStartHint,
+                style: const TextStyle(color: AppConstants.textSecondary),
+              ),
               const SizedBox(height: 8),
               FilledButton(
                 onPressed: _busy ? null : _applyFromStart,
@@ -219,7 +257,10 @@ class _BankMessagesPageState extends State<BankMessagesPage> {
                   child: Center(child: CircularProgressIndicator()),
                 ),
               const SizedBox(height: 20),
-              Text(strings.banks, style: Theme.of(context).textTheme.titleMedium),
+              Text(
+                strings.banks,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
               const SizedBox(height: 8),
               for (final bank in config.banks) _bankRow(strings, bank),
               Align(
@@ -239,7 +280,8 @@ class _BankMessagesPageState extends State<BankMessagesPage> {
 
   Widget _bankRow(SmsStrings strings, BankConfig bank) {
     final messageCount = _copies.where((copy) => copy.bankId == bank.id).length;
-    final ruleCount = _rules.where((rule) => rule.bankId == bank.id).length +
+    final ruleCount =
+        _rules.where((rule) => rule.bankId == bank.id).length +
         _typeWords.where((word) => word.bankId == bank.id).length +
         _categoryRules.where((rule) => rule.bankId == bank.id).length;
     String? sourceName;

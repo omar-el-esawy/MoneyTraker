@@ -106,6 +106,7 @@ void main() {
 
   test('arabic digits are read as amounts', () {
     expect(SmsRuleEngine.parseAmount('١\u066C٢٥٠\u066B٥٠'), 1250.50);
+    expect(SmsRuleEngine.parseAmount('1.234.567'), 1234567);
   });
 
   test('sender matching prefers the longest configured name', () {
@@ -458,58 +459,51 @@ void main() {
     },
   );
 
-  test('type and category patterns require selected words at exact token positions', () {
-    final pattern = SmsRulePattern(
-      tokenCount: 6,
-      words: const [
-        SmsPatternWord(index: 0, word: 'تم'),
-        SmsPatternWord(index: 2, word: 'خصم'),
-      ],
-    );
-    final typeWord = SmsTypeWord(
-      bankId: 'cib',
-      word: pattern.display,
-      typeHint: 'debit',
-      pattern: pattern,
-      createdAt: DateTime(2026),
-    );
-    expect(
-      SmsRuleEngine.detectType('تم تحويل خصم 150 جنيه اليوم', [typeWord]),
-      'debit',
-    );
-    expect(
-      SmsRuleEngine.detectType('تم خصم 150 جنيه اليوم', [typeWord]),
-      '',
-    );
-    expect(
-      SmsRuleEngine.detectType('تم تحويل خصم 150 جنيه', [typeWord]),
-      '',
-    );
+  test(
+    'type and category patterns require selected words at exact token positions',
+    () {
+      final pattern = SmsRulePattern(
+        tokenCount: 6,
+        words: const [
+          SmsPatternWord(index: 0, word: 'تم'),
+          SmsPatternWord(index: 2, word: 'خصم'),
+        ],
+      );
+      final typeWord = SmsTypeWord(
+        bankId: 'cib',
+        word: pattern.display,
+        typeHint: 'debit',
+        pattern: pattern,
+        createdAt: DateTime(2026),
+      );
+      expect(
+        SmsRuleEngine.detectType('تم تحويل خصم 150 جنيه اليوم', [typeWord]),
+        'debit',
+      );
+      expect(SmsRuleEngine.detectType('تم خصم 150 جنيه اليوم', [typeWord]), '');
+      expect(SmsRuleEngine.detectType('تم تحويل خصم 150 جنيه', [typeWord]), '');
 
-    final category = SmsCategoryRule(
-      bankId: 'cib',
-      word: pattern.display,
-      tagId: 7,
-      pattern: pattern,
-      createdAt: DateTime(2026),
-    );
-    expect(
-      SmsRuleEngine.rankCategoryRules(
-        'تم تحويل خصم 150 جنيه اليوم',
+      final category = SmsCategoryRule(
+        bankId: 'cib',
+        word: pattern.display,
+        tagId: 7,
+        pattern: pattern,
+        createdAt: DateTime(2026),
+      );
+      expect(
+        SmsRuleEngine.rankCategoryRules('تم تحويل خصم 150 جنيه اليوم', [
+          category,
+        ]),
         [category],
-      ),
-      [category],
-    );
-    expect(
-      SmsRuleEngine.rankCategoryRules(
-        'تم تحويل خصم 150 جنيه',
-        [category],
-      ),
-      isEmpty,
-    );
-  });
+      );
+      expect(
+        SmsRuleEngine.rankCategoryRules('تم تحويل خصم 150 جنيه', [category]),
+        isEmpty,
+      );
+    },
+  );
 
-  test('a rule requires both prefix and suffix', () {
+  test('a two-sided rule only matches its complete context', () {
     final report = SmsRuleEngine.test(
       corpus: [
         _copy(sender: 'HSBC', body: 'Salary EGP 100 USD'),
@@ -531,11 +525,11 @@ void main() {
       senders: const ['HSBC'],
     );
     expect(report.matched, 1);
-    expect(report.foreignMatches, 1);
+    expect(report.foreignMatches, 0);
     expect(report.tooGeneric, isFalse);
   });
 
-  test('prefix-only and suffix-only rules do not extract values', () {
+  test('strong one-sided rules read numbers at message boundaries', () {
     expect(
       SmsRuleEngine.extract(
         'Salary EGP 100',
@@ -547,7 +541,7 @@ void main() {
           createdAt: DateTime(2026),
         ),
       ),
-      isNull,
+      '100',
     );
     expect(
       SmsRuleEngine.extract(
@@ -560,8 +554,105 @@ void main() {
           createdAt: DateTime(2026),
         ),
       ),
+      '100',
+    );
+    expect(
+      SmsRuleEngine.extract(
+        'Your OTP is 100',
+        SmsReadRule(
+          bankId: 'hsbc',
+          field: SmsField.amount,
+          prefix: 'is',
+          suffix: '',
+          createdAt: DateTime(2026),
+        ),
+      ),
       isNull,
     );
+  });
+
+  test('a balance at the end of a message is extracted', () {
+    const sample = 'تم خصم 150 جنيه والرصيد المتاح 9000';
+    final numbers = SmsRuleEngine.findNumbers(sample);
+    final amountContext = SmsRuleEngine.contextFor(
+      sample,
+      numbers.first,
+      numbers,
+    );
+    final balanceContext = SmsRuleEngine.contextFor(
+      sample,
+      numbers.last,
+      numbers,
+    );
+    final reading = SmsRuleEngine.parse('تم خصم 80 جنيه والرصيد المتاح 1200', [
+      SmsReadRule(
+        bankId: 'cib',
+        field: SmsField.amount,
+        prefix: amountContext.prefix,
+        suffix: amountContext.suffix,
+        typeHint: 'debit',
+        createdAt: DateTime(2026),
+      ),
+      SmsReadRule(
+        bankId: 'cib',
+        field: SmsField.balance,
+        prefix: balanceContext.prefix,
+        suffix: balanceContext.suffix,
+        createdAt: DateTime(2026),
+      ),
+    ]);
+
+    expect(reading.amount, 80);
+    expect(reading.balance, 1200);
+    expect(reading.typeHint, 'debit');
+  });
+
+  test('the most specific matching rule wins over an older broad rule', () {
+    final reading = SmsRuleEngine.parse('Purchase amount EGP 75 completed', [
+      SmsReadRule(
+        bankId: 'cib',
+        field: SmsField.amount,
+        prefix: 'EGP',
+        suffix: 'completed',
+        typeHint: 'credit',
+        createdAt: DateTime(2025),
+      ),
+      SmsReadRule(
+        bankId: 'cib',
+        field: SmsField.amount,
+        prefix: 'Purchase amount EGP',
+        suffix: 'completed',
+        typeHint: 'debit',
+        createdAt: DateTime(2026),
+      ),
+    ]);
+
+    expect(reading.amount, 75);
+    expect(reading.typeHint, 'debit');
+  });
+
+  test('only the matched amount rule supplies the transaction type', () {
+    final reading = SmsRuleEngine.parse('Salary EGP 500 received', [
+      SmsReadRule(
+        bankId: 'cib',
+        field: SmsField.amount,
+        prefix: 'Purchase EGP',
+        suffix: 'completed',
+        typeHint: 'debit',
+        createdAt: DateTime(2025),
+      ),
+      SmsReadRule(
+        bankId: 'cib',
+        field: SmsField.amount,
+        prefix: 'Salary EGP',
+        suffix: 'received',
+        typeHint: 'credit',
+        createdAt: DateTime(2026),
+      ),
+    ]);
+
+    expect(reading.amount, 500);
+    expect(reading.typeHint, 'credit');
   });
 
   test('saved text is matched again even when it is more than one word', () {

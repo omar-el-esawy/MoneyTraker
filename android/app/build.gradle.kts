@@ -35,6 +35,7 @@ android {
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.example.money_traker"
+        resValue("string", "app_name", "money_traker")
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -58,6 +59,8 @@ android {
         // Same key as the pipeline APK, so a USB debug install can replace it.
         // Without android/key.properties, debug stays on the local debug keystore.
         debug {
+            applicationIdSuffix = ".debug"
+            resValue("string", "app_name", "money_traker Debug")
             if (keystorePropertiesFile.exists()) {
                 signingConfig = signingConfigs.getByName("release")
             }

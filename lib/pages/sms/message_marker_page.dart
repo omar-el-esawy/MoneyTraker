@@ -98,7 +98,9 @@ class _MessageMarkerPageState extends State<MessageMarkerPage> {
         ..sort((a, b) => b.word.length.compareTo(a.word.length));
       for (final saved in savedTypes) {
         final pattern = saved.pattern;
-        if (pattern != null && pattern.tokenCount == SmsRuleEngine.tokenize(widget.copy.body).length) {
+        if (pattern != null &&
+            pattern.tokenCount ==
+                SmsRuleEngine.tokenize(widget.copy.body).length) {
           final tokens = SmsRuleEngine.tokenize(widget.copy.body);
           for (final selected in pattern.words) {
             final token = tokens[selected.index];
@@ -132,7 +134,9 @@ class _MessageMarkerPageState extends State<MessageMarkerPage> {
         ..sort((a, b) => b.word.length.compareTo(a.word.length));
       for (final saved in savedCategories) {
         final pattern = saved.pattern;
-        if (pattern != null && pattern.tokenCount == SmsRuleEngine.tokenize(widget.copy.body).length) {
+        if (pattern != null &&
+            pattern.tokenCount ==
+                SmsRuleEngine.tokenize(widget.copy.body).length) {
           final tokens = SmsRuleEngine.tokenize(widget.copy.body);
           for (final selected in pattern.words) {
             final token = tokens[selected.index];
@@ -470,16 +474,15 @@ class _MessageMarkerPageState extends State<MessageMarkerPage> {
     };
     final rules = <SmsCategoryRule>[];
     for (final saved in _savedCategoryRules) {
-      final inMessage = SmsRuleEngine.locateRule(
+      final inMessage =
+          SmsRuleEngine.locateRule(
             widget.copy.body,
             saved.pattern,
             saved.word,
           ) !=
           null;
       final key = saved.pattern?.key ?? saved.word.toLowerCase();
-      if (saved.id != null &&
-          inMessage &&
-          !keep.contains(key)) {
+      if (saved.id != null && inMessage && !keep.contains(key)) {
         rules.add(saved);
       }
     }
@@ -538,7 +541,15 @@ class _MessageMarkerPageState extends State<MessageMarkerPage> {
         mark.span,
         numbers,
       );
-      if (!context.isUseful) {
+      final probe = SmsReadRule(
+        bankId: widget.copy.bankId,
+        field: mark.field,
+        prefix: context.prefix,
+        suffix: context.suffix,
+        createdAt: DateTime.now(),
+      );
+      if (!context.isUseful ||
+          SmsRuleEngine.extract(widget.copy.body, probe) == null) {
         _snack(s.weakRule);
         return;
       }
@@ -569,7 +580,12 @@ class _MessageMarkerPageState extends State<MessageMarkerPage> {
         final key =
             '${saved.pattern?.key ?? saved.word.toLowerCase()}|${saved.typeHint}';
         final stillInMessage =
-            SmsRuleEngine.locateRule(widget.copy.body, saved.pattern, saved.word) != null;
+            SmsRuleEngine.locateRule(
+              widget.copy.body,
+              saved.pattern,
+              saved.word,
+            ) !=
+            null;
         if (saved.id != null && stillInMessage && !keep.contains(key)) {
           wordsToDelete.add(saved);
         }
@@ -743,7 +759,9 @@ class _MessageMarkerPageState extends State<MessageMarkerPage> {
                               spacing: 6,
                               runSpacing: 8,
                               children: [
-                                for (final token in SmsRuleEngine.tokenize(widget.copy.body))
+                                for (final token in SmsRuleEngine.tokenize(
+                                  widget.copy.body,
+                                ))
                                   _tokenChip(token),
                               ],
                             ),
@@ -856,7 +874,9 @@ class _MessageMarkerPageState extends State<MessageMarkerPage> {
         ),
         child: Text(
           token.text,
-          style: TextStyle(fontWeight: selected ? FontWeight.w700 : FontWeight.w400),
+          style: TextStyle(
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
+          ),
         ),
       ),
     );

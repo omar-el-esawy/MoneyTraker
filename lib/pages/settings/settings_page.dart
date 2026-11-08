@@ -11,6 +11,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:money_traker/constants/app_constants.dart';
 import 'package:money_traker/pages/app_update_prompt.dart';
 import 'package:money_traker/pages/sms/bank_messages_page.dart';
+import 'package:money_traker/pages/sms_templates/sms_templates_page.dart';
 import 'package:money_traker/services/app_update.dart';
 import 'package:money_traker/services/app_update_logic.dart';
 import 'package:money_traker/services/backup_service.dart';
@@ -293,6 +294,21 @@ class _SettingsPageState extends State<SettingsPage> {
                           await Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (_) => const BankMessagesPage(),
+                            ),
+                          );
+                          await widget.onDataImported?.call();
+                        },
+                      ),
+                      _SettingsTile(
+                        icon: Icons.auto_awesome_motion_outlined,
+                        title: 'SMS Templates',
+                        arabic: 'قوالب الرسائل',
+                        subtitle:
+                            'Teach bank formats and control automatic balance changes.',
+                        onTap: () async {
+                          await Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const SmsTemplatesPage(),
                             ),
                           );
                           await widget.onDataImported?.call();
