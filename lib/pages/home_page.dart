@@ -88,7 +88,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       'Travel',
       'Family',
       'Vodafone Cash',
-      'Instapay',
       'USD',
       'Gold',
       'Office',
