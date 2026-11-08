@@ -67,40 +67,45 @@ class _SmsTemplateBankPageState extends State<SmsTemplateBankPage> {
     if (bank == null) return;
     final sourceId = await showModalBottomSheet<int?>(
       context: context,
+      isScrollControlled: true,
       showDragHandle: true,
       builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-              child: Text(
-                'Money source',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.block),
-              title: const Text('No source'),
-              subtitle: const Text('Parse messages without changing money'),
-              onTap: () => Navigator.pop(context, -1),
-            ),
-            for (final source in _sources)
-              ListTile(
-                leading: Icon(
-                  source.id == bank.sourceId
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_off,
-                  color: source.id == bank.sourceId
-                      ? AppConstants.primaryColor
-                      : null,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * .75,
+          ),
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                child: Text(
+                  'Money source',
+                  style: Theme.of(context).textTheme.titleLarge,
                 ),
-                title: Text(source.name),
-                subtitle: Text(source.amount.toStringAsFixed(2)),
-                onTap: () => Navigator.pop(context, source.id),
               ),
-          ],
+              ListTile(
+                leading: const Icon(Icons.block),
+                title: const Text('No source'),
+                subtitle: const Text('Parse messages without changing money'),
+                onTap: () => Navigator.pop(context, -1),
+              ),
+              for (final source in _sources)
+                ListTile(
+                  leading: Icon(
+                    source.id == bank.sourceId
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_off,
+                    color: source.id == bank.sourceId
+                        ? AppConstants.primaryColor
+                        : null,
+                  ),
+                  title: Text(source.name),
+                  subtitle: Text(source.amount.toStringAsFixed(2)),
+                  onTap: () => Navigator.pop(context, source.id),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -166,18 +171,46 @@ class _SmsTemplateBankPageState extends State<SmsTemplateBankPage> {
   }
 
   Future<void> _openWizard([SmsTemplateStoredMessage? message]) async {
-    final bank = _bank;
+    var bank = _bank;
     if (bank == null) return;
+    if (bank.sourceId == null) {
+      final chooseSource = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Money source required'),
+          content: const Text(
+            'Connect this bank to a money source before creating a rule.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Choose money source'),
+            ),
+          ],
+        ),
+      );
+      if (chooseSource != true || !mounted) return;
+      await _chooseSource();
+      if (!mounted) return;
+      bank = _bank;
+      if (bank == null || bank.sourceId == null) return;
+    }
+    final readyBank = bank;
+    if (readyBank.sourceId == null) return;
     final saved = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (_) =>
-            SmsTemplateWizardPage(bank: bank, initialMessage: message),
+            SmsTemplateWizardPage(bank: readyBank, initialMessage: message),
       ),
     );
     if (saved == true) {
       setState(() => _busy = true);
-      await SmsTemplateSyncService.instance.reprocessBank(bank.id);
+      await SmsTemplateSyncService.instance.reprocessBank(readyBank.id);
       await _load();
       if (mounted) setState(() => _busy = false);
     }

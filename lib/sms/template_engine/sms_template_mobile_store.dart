@@ -4,7 +4,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 
 import 'package:money_traker/data/database_helper.dart';
-import 'package:money_traker/sms/sms_models.dart';
 import 'package:money_traker/sms/template_engine/template_models.dart';
 
 class SmsTemplateBank {
@@ -216,7 +215,6 @@ class SmsTemplateMobileStore {
 
   static const enabledKey = 'sms_templates_v2_enabled';
   static const lastSyncKey = 'sms_templates_v2_last_sync';
-  static const banksInitializedKey = 'sms_templates_v2_banks_initialized';
 
   Future<Database> get _db => DatabaseHelper.instance.database;
 

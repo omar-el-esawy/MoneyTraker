@@ -2,10 +2,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:money_traker/constants/app_constants.dart';
+import 'package:money_traker/model/money_source.dart';
 import 'package:money_traker/pages/sms_templates/sms_template_bank_page.dart';
 import 'package:money_traker/pages/sms_templates/sms_template_operations_page.dart';
 import 'package:money_traker/services/sms_template_sync_service.dart';
 import 'package:money_traker/sms/template_engine/sms_template_mobile_store.dart';
+import 'package:money_traker/store/money_storage.dart';
 
 class SmsTemplatesPage extends StatefulWidget {
   const SmsTemplatesPage({super.key});
@@ -22,6 +24,7 @@ class _SmsTemplatesPageState extends State<SmsTemplatesPage> {
   List<SmsTemplateBank> _banks = const [];
   List<SmsTemplateStoredMessage> _messages = const [];
   List<SmsTemplateApplication> _applications = const [];
+  List<MoneySource> _sources = const [];
   Map<String, int> _templateCounts = const {};
 
   @override
@@ -36,12 +39,14 @@ class _SmsTemplatesPageState extends State<SmsTemplatesPage> {
     final templates = await _store.getTemplates();
     final messages = await _store.getMessages();
     final applications = await _store.getApplications();
+    final sources = await MoneyStorage().getMoneySources();
     if (!mounted) return;
     setState(() {
       _enabled = enabled;
       _banks = banks;
       _messages = messages;
       _applications = applications;
+      _sources = sources;
       _templateCounts = {
         for (final bank in banks)
           bank.id: templates
@@ -118,48 +123,76 @@ class _SmsTemplatesPageState extends State<SmsTemplatesPage> {
   Future<void> _addBank() async {
     final name = TextEditingController();
     final sender = TextEditingController();
+    int? selectedSourceId;
     final save = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (context) => Padding(
-        padding: EdgeInsets.fromLTRB(
-          20,
-          0,
-          20,
-          MediaQuery.viewInsetsOf(context).bottom + 24,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Add a bank', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 16),
-            TextField(
-              controller: name,
-              autofocus: true,
-              decoration: const InputDecoration(
-                labelText: 'Bank name',
-                hintText: 'Example: My Bank',
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => Padding(
+          padding: EdgeInsets.fromLTRB(
+            20,
+            0,
+            20,
+            MediaQuery.viewInsetsOf(context).bottom + 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Add a bank', style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 16),
+              TextField(
+                controller: name,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'Bank name',
+                  hintText: 'Example: My Bank',
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: sender,
-              decoration: const InputDecoration(
-                labelText: 'Exact sender ID',
-                hintText: 'Example: MYBANK',
+              const SizedBox(height: 12),
+              TextField(
+                controller: sender,
+                decoration: const InputDecoration(
+                  labelText: 'Exact sender ID',
+                  hintText: 'Example: MYBANK',
+                ),
               ),
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Add bank'),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<int>(
+                initialValue: selectedSourceId,
+                decoration: InputDecoration(
+                  labelText: 'Money source',
+                  helperText: _sources.isEmpty
+                      ? 'Create a money source before adding a bank.'
+                      : 'Required before rules can be created.',
+                ),
+                items: [
+                  for (final source in _sources)
+                    if (source.id != null)
+                      DropdownMenuItem(
+                        value: source.id,
+                        child: Text(
+                          '${source.name} • ${source.amount.toStringAsFixed(2)}',
+                        ),
+                      ),
+                ],
+                onChanged: _sources.isEmpty
+                    ? null
+                    : (value) => setSheetState(() => selectedSourceId = value),
               ),
-            ),
-          ],
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: selectedSourceId == null
+                      ? null
+                      : () => Navigator.pop(context, true),
+                  child: const Text('Add bank'),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -167,11 +200,17 @@ class _SmsTemplatesPageState extends State<SmsTemplatesPage> {
     final senderId = sender.text.trim();
     name.dispose();
     sender.dispose();
-    if (save != true || bankName.isEmpty || senderId.isEmpty) return;
+    if (save != true ||
+        bankName.isEmpty ||
+        senderId.isEmpty ||
+        selectedSourceId == null) {
+      return;
+    }
     final bank = SmsTemplateBank(
       id: 'sms_v2_${DateTime.now().microsecondsSinceEpoch}',
       name: bankName,
       senders: [senderId],
+      sourceId: selectedSourceId,
       createdAt: DateTime.now(),
     );
     await _store.saveBank(bank);
@@ -358,8 +397,8 @@ class _SmsTemplatesPageState extends State<SmsTemplatesPage> {
                         color: item.undone
                             ? AppConstants.textTertiary
                             : item.delta > 0
-                                ? const Color(0xFF15803D)
-                                : AppConstants.errorColor,
+                            ? const Color(0xFF15803D)
+                            : AppConstants.errorColor,
                       ),
                       title: Text('${item.bankName} • ${item.sourceName}'),
                       subtitle: Text(
@@ -375,8 +414,7 @@ class _SmsTemplatesPageState extends State<SmsTemplatesPage> {
                         await Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) =>
-                                const SmsTemplateOperationsPage(),
+                            builder: (_) => const SmsTemplateOperationsPage(),
                           ),
                         );
                         await _load();
