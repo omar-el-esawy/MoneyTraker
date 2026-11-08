@@ -19,6 +19,7 @@ class InboxItem {
   final List<SuggestedCategory> suggestions;
   final bool hasOtherCategories;
   final String? chosenName;
+  final bool categorySkipped;
   final String? version;
   final int? buildNumber;
   final String? downloadUrl;
@@ -40,6 +41,7 @@ class InboxItem {
     this.suggestions = const [],
     this.hasOtherCategories = false,
     this.chosenName,
+    this.categorySkipped = false,
     this.version,
     this.buildNumber,
     this.downloadUrl,
@@ -52,6 +54,7 @@ class InboxItem {
     bool? needsCategory,
     String? chosenName,
     bool clearChosenName = false,
+    bool? categorySkipped,
   }) {
     return InboxItem(
       id: id,
@@ -68,6 +71,7 @@ class InboxItem {
       suggestions: suggestions,
       hasOtherCategories: hasOtherCategories,
       chosenName: clearChosenName ? null : (chosenName ?? this.chosenName),
+      categorySkipped: categorySkipped ?? this.categorySkipped,
       version: version,
       buildNumber: buildNumber,
       downloadUrl: downloadUrl,
@@ -77,26 +81,27 @@ class InboxItem {
   }
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'kind': kind.name,
-        'createdAt': createdAt.millisecondsSinceEpoch,
-        'read': read,
-        'occurredAt': occurredAt?.millisecondsSinceEpoch,
-        'transactionId': transactionId,
-        'bank': bank,
-        'amount': amount,
-        'debit': debit,
-        'preview': preview,
-        'needsCategory': needsCategory,
-        'suggestions': [for (final item in suggestions) item.toJson()],
-        'hasOtherCategories': hasOtherCategories,
-        'chosenName': chosenName,
-        'version': version,
-        'buildNumber': buildNumber,
-        'downloadUrl': downloadUrl,
-        'changelog': changelog,
-        'force': force,
-      };
+    'id': id,
+    'kind': kind.name,
+    'createdAt': createdAt.millisecondsSinceEpoch,
+    'read': read,
+    'occurredAt': occurredAt?.millisecondsSinceEpoch,
+    'transactionId': transactionId,
+    'bank': bank,
+    'amount': amount,
+    'debit': debit,
+    'preview': preview,
+    'needsCategory': needsCategory,
+    'suggestions': [for (final item in suggestions) item.toJson()],
+    'hasOtherCategories': hasOtherCategories,
+    'chosenName': chosenName,
+    'categorySkipped': categorySkipped,
+    'version': version,
+    'buildNumber': buildNumber,
+    'downloadUrl': downloadUrl,
+    'changelog': changelog,
+    'force': force,
+  };
 
   factory InboxItem.fromJson(Map<String, dynamic> json) {
     final suggestions = <SuggestedCategory>[];
@@ -104,18 +109,26 @@ class InboxItem {
     if (rawSuggestions is List) {
       for (final item in rawSuggestions) {
         if (item is Map) {
-          suggestions.add(SuggestedCategory.fromJson(Map<String, dynamic>.from(item)));
+          suggestions.add(
+            SuggestedCategory.fromJson(Map<String, dynamic>.from(item)),
+          );
         }
       }
     }
     return InboxItem(
       id: json['id']?.toString() ?? '',
-      kind: json['kind'] == InboxKind.update.name ? InboxKind.update : InboxKind.transaction,
-      createdAt: DateTime.fromMillisecondsSinceEpoch((json['createdAt'] as num?)?.toInt() ?? 0),
+      kind: json['kind'] == InboxKind.update.name
+          ? InboxKind.update
+          : InboxKind.transaction,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(
+        (json['createdAt'] as num?)?.toInt() ?? 0,
+      ),
       read: json['read'] == true,
       occurredAt: json['occurredAt'] == null
           ? null
-          : DateTime.fromMillisecondsSinceEpoch((json['occurredAt'] as num).toInt()),
+          : DateTime.fromMillisecondsSinceEpoch(
+              (json['occurredAt'] as num).toInt(),
+            ),
       transactionId: (json['transactionId'] as num?)?.toInt(),
       bank: json['bank']?.toString(),
       amount: (json['amount'] as num?)?.toDouble(),
@@ -125,6 +138,7 @@ class InboxItem {
       suggestions: suggestions,
       hasOtherCategories: json['hasOtherCategories'] == true,
       chosenName: json['chosenName']?.toString(),
+      categorySkipped: json['categorySkipped'] == true,
       version: json['version']?.toString(),
       buildNumber: (json['buildNumber'] as num?)?.toInt(),
       downloadUrl: json['downloadUrl']?.toString(),
@@ -150,7 +164,8 @@ class ArrivalPlan {
 
 const inboxItemLimit = 40;
 
-int unreadCountOf(List<InboxItem> items) => items.where((item) => !item.read).length;
+int unreadCountOf(List<InboxItem> items) =>
+    items.where((item) => !item.read).length;
 
 List<InboxItem> markInboxRead(List<InboxItem> items) {
   return [
@@ -164,7 +179,8 @@ String smsPreview(String raw) {
   return '${line.substring(0, 87)}...';
 }
 
-String updateInboxId(String version, int? buildNumber) => 'update-$version-${buildNumber ?? 0}';
+String updateInboxId(String version, int? buildNumber) =>
+    'update-$version-${buildNumber ?? 0}';
 
 InboxItem transactionNotice({
   required TransactionEntity transaction,
@@ -173,7 +189,8 @@ InboxItem transactionNotice({
   required DateTime now,
 }) {
   final id = transaction.id!;
-  final needsCategory = transaction.categoryTagId == null && transaction.amount.abs() > 0;
+  final needsCategory =
+      transaction.categoryTagId == null && transaction.amount.abs() > 0;
   return InboxItem(
     id: 'tx-$id',
     kind: InboxKind.transaction,
@@ -191,6 +208,33 @@ InboxItem transactionNotice({
   );
 }
 
+TagType? categoryTypeFor(InboxItem item) {
+  if (item.kind != InboxKind.transaction) return null;
+  if (item.suggestions.isNotEmpty) return item.suggestions.first.type;
+  if (item.debit == true) return TagType.expense;
+  if (item.debit == false) return TagType.income;
+  return null;
+}
+
+InboxItem chooseInboxCategory(InboxItem item, String name) {
+  return item.copyWith(
+    needsCategory: false,
+    categorySkipped: false,
+    chosenName: name,
+  );
+}
+
+/// Leaves the transfer uncategorized and stops asking on this card.
+/// A category already saved on the card stays put.
+InboxItem skipInboxCategory(InboxItem item) {
+  if (item.chosenName != null) return item;
+  return item.copyWith(
+    needsCategory: false,
+    categorySkipped: true,
+    clearChosenName: true,
+  );
+}
+
 List<InboxItem> capInbox(List<InboxItem> items) {
   if (items.length <= inboxItemLimit) return items;
   return items.take(inboxItemLimit).toList();
@@ -205,12 +249,16 @@ ArrivalPlan planBankArrivals({
   required Set<int> seenIds,
   required List<InboxItem> items,
   required List<TransactionEntity> transactions,
-  required List<SuggestedCategory> Function(TransactionEntity transaction) suggestionsFor,
+  required List<SuggestedCategory> Function(TransactionEntity transaction)
+  suggestionsFor,
   bool Function(TransactionEntity transaction)? hasOtherCategoriesFor,
   required DateTime now,
   Set<int>? baselineIds,
 }) {
-  final known = {for (final transaction in transactions) if (transaction.id != null) transaction.id!};
+  final known = {
+    for (final transaction in transactions)
+      if (transaction.id != null) transaction.id!,
+  };
   var remembered = seenIds;
   if (!seeded) {
     final baseline = baselineIds ?? known;
@@ -228,11 +276,15 @@ ArrivalPlan planBankArrivals({
   final arrivals = transactions.where((transaction) {
     final id = transaction.id;
     return id != null && !remembered.contains(id);
-  }).toList()
-    ..sort((a, b) => b.date.compareTo(a.date));
+  }).toList()..sort((a, b) => b.date.compareTo(a.date));
 
   if (arrivals.isEmpty) {
-    return ArrivalPlan(seeded: true, seenIds: remembered, items: items, fresh: const []);
+    return ArrivalPlan(
+      seeded: true,
+      seenIds: remembered,
+      items: items,
+      fresh: const [],
+    );
   }
 
   final notices = [
@@ -257,15 +309,26 @@ List<SuggestedCategory> suggestionsForTransaction({
   required List<Tag> tags,
   required Map<int, int> usageByTagId,
 }) {
-  if (transaction.categoryTagId != null || transaction.amount.abs() == 0) return const [];
-  final type = transaction.type == TransactionType.debit ? TagType.expense : TagType.income;
-  return suggestFamousCategories(type: type, tags: tags, usageByTagId: usageByTagId);
+  if (transaction.categoryTagId != null || transaction.amount.abs() == 0) {
+    return const [];
+  }
+  final type = transaction.type == TransactionType.debit
+      ? TagType.expense
+      : TagType.income;
+  return suggestFamousCategories(
+    type: type,
+    tags: tags,
+    usageByTagId: usageByTagId,
+  );
 }
 
 /// [offer] null means the installed app is current, so update cards go away.
 /// The same offer keeps its read state.
 List<InboxItem> planUpdateOffer(List<InboxItem> items, {InboxItem? offer}) {
-  final rest = [for (final item in items) if (item.kind != InboxKind.update) item];
+  final rest = [
+    for (final item in items)
+      if (item.kind != InboxKind.update) item,
+  ];
   if (offer == null) return rest;
   for (final item in items) {
     if (item.id == offer.id) return capInbox([item, ...rest]);

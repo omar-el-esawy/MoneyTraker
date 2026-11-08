@@ -69,13 +69,17 @@ class InboxStore extends ChangeNotifier {
               : TagType.income;
           final available = tags.where((tag) {
             final name = tag.name.trim().toLowerCase();
-            return tag.type == type && tag.id != null && name.isNotEmpty && name != 'others';
+            return tag.type == type &&
+                tag.id != null &&
+                name.isNotEmpty &&
+                name != 'others';
           });
-          return available.length > suggestionsForTransaction(
-            transaction: transaction,
-            tags: tags,
-            usageByTagId: usage,
-          ).length;
+          return available.length >
+              suggestionsForTransaction(
+                transaction: transaction,
+                tags: tags,
+                usageByTagId: usage,
+              ).length;
         },
       );
       _seeded = plan.seeded;
@@ -119,8 +123,11 @@ class InboxStore extends ChangeNotifier {
         _loaded = true;
       }
       final next = markInboxRead(items);
-      final changed = next.length != items.length ||
-          next.asMap().entries.any((entry) => entry.value.read != items[entry.key].read);
+      final changed =
+          next.length != items.length ||
+          next.asMap().entries.any(
+            (entry) => entry.value.read != items[entry.key].read,
+          );
       items = next;
       if (changed) await _write();
       notifyListeners();
@@ -137,38 +144,66 @@ class InboxStore extends ChangeNotifier {
       if (index < 0) return;
       final item = items[index];
       final transactionId = item.transactionId;
-      if (transactionId == null || choice.name.trim().isEmpty) return;
+      final name = choice.name.trim();
+      if (transactionId == null ||
+          name.isEmpty ||
+          name.toLowerCase() == 'others') {
+        return;
+      }
       final transaction = await _db.getTransactionById(transactionId);
       if (transaction == null) {
         throw StateError('Transaction is no longer saved');
       }
       final tag = await TransactionCategoryAssigner.instance.assign(
         transaction: transaction,
-        name: choice.name,
+        name: name,
         type: choice.type,
       );
       final next = [...items];
-      next[index] = item.copyWith(needsCategory: false, chosenName: tag.name);
+      next[index] = chooseInboxCategory(item, tag.name);
       items = next;
       await _write();
       notifyListeners();
     });
   }
 
-  Future<List<SuggestedCategory>> otherCategoriesFor(InboxItem item) async {
-    if (item.suggestions.isEmpty) return const [];
-    final suggestedNames = {
-      for (final suggestion in item.suggestions) suggestion.name.trim().toLowerCase(),
-    };
-    final tags = await _storage.getTags(type: item.suggestions.first.type);
+  Future<void> skipCategory(String itemId) {
+    return _serial(() async {
+      if (!_loaded) {
+        await _read();
+        _loaded = true;
+      }
+      final index = items.indexWhere((item) => item.id == itemId);
+      if (index < 0) return;
+      final item = items[index];
+      final skipped = skipInboxCategory(item);
+      if (identical(skipped, item)) return;
+      final next = [...items];
+      next[index] = skipped;
+      items = next;
+      await _write();
+      notifyListeners();
+    });
+  }
+
+  Future<List<SuggestedCategory>> categoriesFor(InboxItem item) async {
+    final type = categoryTypeFor(item);
+    if (type == null) return const [];
+    final tags = await _storage.getTags(type: type);
     return [
       for (final tag in tags)
-        if (tag.id != null &&
-            tag.name.trim().isNotEmpty &&
-            tag.name.trim().toLowerCase() != 'others' &&
-            !suggestedNames.contains(tag.name.trim().toLowerCase()))
-          SuggestedCategory(tagId: tag.id, name: tag.name.trim(), type: tag.type),
+        if (tag.id != null && _choosableCategory(tag.name))
+          SuggestedCategory(
+            tagId: tag.id,
+            name: tag.name.trim(),
+            type: tag.type,
+          ),
     ];
+  }
+
+  bool _choosableCategory(String name) {
+    final trimmed = name.trim().toLowerCase();
+    return trimmed.isNotEmpty && trimmed != 'others';
   }
 
   Future<T> _serial<T>(Future<T> Function() action) {
@@ -204,7 +239,10 @@ class InboxStore extends ChangeNotifier {
   Future<void> _read() async {
     final prefs = await SharedPreferences.getInstance();
     _seeded = prefs.getBool(_seededKey) ?? false;
-    _seen = (prefs.getStringList(_seenKey) ?? const <String>[]).map(int.tryParse).whereType<int>().toSet();
+    _seen = (prefs.getStringList(_seenKey) ?? const <String>[])
+        .map(int.tryParse)
+        .whereType<int>()
+        .toSet();
     final raw = prefs.getString(_itemsKey);
     if (raw == null || raw.isEmpty) {
       items = const [];
@@ -231,6 +269,9 @@ class InboxStore extends ChangeNotifier {
     await prefs.setBool(_seededKey, _seeded);
     final seen = [for (final id in _seen) '$id']..sort();
     await prefs.setStringList(_seenKey, seen);
-    await prefs.setString(_itemsKey, jsonEncode([for (final item in items) item.toJson()]));
+    await prefs.setString(
+      _itemsKey,
+      jsonEncode([for (final item in items) item.toJson()]),
+    );
   }
 }

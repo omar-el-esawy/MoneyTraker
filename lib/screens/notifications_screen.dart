@@ -5,6 +5,7 @@ import 'package:money_traker/constants/app_constants.dart';
 import 'package:money_traker/pages/app_update_prompt.dart';
 import 'package:money_traker/services/app_update.dart';
 import 'package:money_traker/services/app_update_logic.dart';
+import 'package:money_traker/model/tag.dart';
 import 'package:money_traker/services/category_suggestions.dart';
 import 'package:money_traker/services/inbox_logic.dart';
 import 'package:money_traker/services/inbox_store.dart';
@@ -66,7 +67,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(_arabic ? 'متعذر حفظ التصنيف.' : 'Could not save that category.'),
+          content: Text(
+            _arabic ? 'متعذر حفظ التصنيف.' : 'Could not save that category.',
+          ),
         ),
       );
     } finally {
@@ -74,32 +77,47 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
-  Future<void> _chooseOther(InboxItem item) async {
+  Future<void> _skip(InboxItem item) async {
     if (_savingId != null) return;
+    setState(() => _savingId = item.id);
     try {
-      final categories = await InboxStore.instance.otherCategoriesFor(item);
+      await InboxStore.instance.skipCategory(item.id);
+    } catch (e) {
+      debugPrint('Skipping category failed: $e');
       if (!mounted) return;
-      if (categories.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              _arabic ? 'مفيش تصنيفات تانية متاحة.' : 'No other categories are available.',
-            ),
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _arabic ? 'متعذر حفظ الاختيار.' : 'Could not save that choice.',
           ),
-        );
-        return;
-      }
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _savingId = null);
+    }
+  }
+
+  Future<void> _openCategoryPicker(InboxItem item) async {
+    if (_savingId != null) return;
+    final type = categoryTypeFor(item);
+    if (type == null) return;
+    try {
+      final categories = await InboxStore.instance.categoriesFor(item);
+      if (!mounted) return;
       final choice = await showModalBottomSheet<SuggestedCategory>(
         context: context,
         showDragHandle: true,
-        builder: (context) => _OtherCategoryPicker(
+        isScrollControlled: true,
+        builder: (context) => _CategoryPicker(
           arabic: _arabic,
+          type: type,
           categories: categories,
+          currentName: item.chosenName,
         ),
       );
       if (choice != null && mounted) await _choose(item, choice);
     } catch (e) {
-      debugPrint('Other category loading failed: $e');
+      debugPrint('Category picker failed: $e');
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -114,7 +132,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   Future<void> _openUpdate(InboxItem item) async {
     final url = item.downloadUrl;
     final version = item.version;
-    if (url == null || url.isEmpty || version == null || version.isEmpty) return;
+    if (url == null || url.isEmpty || version == null || version.isEmpty) {
+      return;
+    }
     await showOptionalUpdateDialog(
       context,
       UpdateOffer(
@@ -139,26 +159,26 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         body: _loading
             ? const Center(child: CircularProgressIndicator())
             : items.isEmpty
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(32),
-                      child: Text(
-                        arabic
-                            ? 'مفيش إشعارات. تحويلات البنك والتحديثات بتظهر هنا.'
-                            : 'No notifications yet. Bank transfers and app updates show up here.',
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                              color: AppConstants.textSecondary,
-                            ),
-                      ),
+            ? Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(32),
+                  child: Text(
+                    arabic
+                        ? 'مفيش إشعارات. تحويلات البنك والتحديثات بتظهر هنا.'
+                        : 'No notifications yet. Bank transfers and app updates show up here.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: AppConstants.textSecondary,
                     ),
-                  )
-                : ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                    itemCount: items.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 12),
-                    itemBuilder: (context, index) => _card(items[index]),
                   ),
+                ),
+              )
+            : ListView.separated(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                itemCount: items.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 12),
+                itemBuilder: (context, index) => _card(items[index]),
+              ),
       ),
     );
   }
@@ -175,7 +195,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-        child: item.kind == InboxKind.update ? _updateBody(item) : _transactionBody(item),
+        child: item.kind == InboxKind.update
+            ? _updateBody(item)
+            : _transactionBody(item),
       ),
     );
   }
@@ -193,7 +215,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           children: [
             Icon(
               debit ? Icons.arrow_upward : Icons.arrow_downward,
-              color: debit ? AppConstants.errorColor : AppConstants.primaryLight,
+              color: debit
+                  ? AppConstants.errorColor
+                  : AppConstants.primaryLight,
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -214,9 +238,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         Text(
           '${debit ? '-' : '+'}${_money.format(amount.abs())}${bank.isEmpty ? '' : ' · $bank'}',
           style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                color: debit ? AppConstants.errorColor : AppConstants.primaryColor,
-                fontWeight: FontWeight.w700,
-              ),
+            color: debit ? AppConstants.errorColor : AppConstants.primaryColor,
+            fontWeight: FontWeight.w700,
+          ),
         ),
         if ((item.preview ?? '').isNotEmpty) ...[
           const SizedBox(height: 6),
@@ -229,13 +253,35 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         ],
         if (item.chosenName != null) ...[
           const SizedBox(height: 10),
-          Text(
-            arabic ? 'اتحفظت في ${item.chosenName}' : 'Saved in ${item.chosenName}',
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  color: AppConstants.primaryColor,
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  arabic
+                      ? 'اتحفظت في ${item.chosenName}'
+                      : 'Saved in ${item.chosenName}',
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: AppConstants.primaryColor,
+                  ),
                 ),
+              ),
+              TextButton(
+                onPressed: _savingId == null
+                    ? () => _openCategoryPicker(item)
+                    : null,
+                child: Text(arabic ? 'تعديل' : 'Edit'),
+              ),
+            ],
           ),
-        ] else if (item.needsCategory && item.suggestions.isNotEmpty) ...[
+        ] else if (item.categorySkipped) ...[
+          const SizedBox(height: 10),
+          Text(
+            arabic ? 'من غير تصنيف' : 'No category',
+            style: Theme.of(
+              context,
+            ).textTheme.labelLarge?.copyWith(color: AppConstants.textSecondary),
+          ),
+        ] else if (item.needsCategory) ...[
           const SizedBox(height: 12),
           Text(
             arabic
@@ -251,26 +297,33 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               for (final choice in item.suggestions)
                 ActionChip(
                   label: Text(choice.name),
-                  onPressed: _savingId == null ? () => _choose(item, choice) : null,
+                  onPressed: _savingId == null
+                      ? () => _choose(item, choice)
+                      : null,
                   backgroundColor: AppConstants.primarySurface,
                   side: const BorderSide(color: AppConstants.primaryLight),
                 ),
-              if (item.hasOtherCategories)
-                ActionChip(
-                  avatar: const Icon(Icons.more_horiz, size: 18),
-                  label: Text(arabic ? 'تصنيف تاني' : 'Other category'),
-                  onPressed: _savingId == null ? () => _chooseOther(item) : null,
-                ),
+              ActionChip(
+                avatar: const Icon(Icons.add, size: 18),
+                label: Text(arabic ? 'تصنيف مخصص' : 'Custom category'),
+                onPressed: _savingId == null
+                    ? () => _openCategoryPicker(item)
+                    : null,
+              ),
+              ActionChip(
+                label: Text(arabic ? 'من غير تصنيف' : 'No category'),
+                onPressed: _savingId == null ? () => _skip(item) : null,
+              ),
             ],
           ),
-          if (_savingId == item.id) ...[
-            const SizedBox(height: 8),
-            const LinearProgressIndicator(
-              minHeight: 3,
-              color: AppConstants.primaryColor,
-              backgroundColor: AppConstants.primarySurface,
-            ),
-          ],
+        ],
+        if (_savingId == item.id) ...[
+          const SizedBox(height: 8),
+          const LinearProgressIndicator(
+            minHeight: 3,
+            color: AppConstants.primaryColor,
+            backgroundColor: AppConstants.primarySurface,
+          ),
         ],
       ],
     );
@@ -287,7 +340,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       children: [
         Row(
           children: [
-            const Icon(Icons.system_update_alt, color: AppConstants.primaryColor),
+            const Icon(
+              Icons.system_update_alt,
+              color: AppConstants.primaryColor,
+            ),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
@@ -329,45 +385,114 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 }
 
-class _OtherCategoryPicker extends StatelessWidget {
+class _CategoryPicker extends StatefulWidget {
   final bool arabic;
+  final TagType type;
   final List<SuggestedCategory> categories;
+  final String? currentName;
 
-  const _OtherCategoryPicker({
+  const _CategoryPicker({
     required this.arabic,
+    required this.type,
     required this.categories,
+    this.currentName,
   });
 
   @override
+  State<_CategoryPicker> createState() => _CategoryPickerState();
+}
+
+class _CategoryPickerState extends State<_CategoryPicker> {
+  final _name = TextEditingController();
+  String? _error;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  void _saveCustom() {
+    final name = _name.text.trim();
+    if (name.isEmpty) return;
+    if (name.toLowerCase() == 'others') {
+      setState(() {
+        _error = widget.arabic ? 'اسم Others محجوز.' : '"Others" is reserved.';
+      });
+      return;
+    }
+    Navigator.pop(context, SuggestedCategory(name: name, type: widget.type));
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final arabic = widget.arabic;
+    final current = widget.currentName;
+    final bottom = MediaQuery.viewInsetsOf(context).bottom;
     return Directionality(
       textDirection: arabic ? TextDirection.rtl : TextDirection.ltr,
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(16, 0, 16, 16 + bottom),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                current == null
+                    ? (arabic ? 'اختار تصنيف' : 'Choose a category')
+                    : (arabic ? 'غيّر التصنيف' : 'Change category'),
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              if (current != null) ...[
+                const SizedBox(height: 8),
                 Text(
-                  arabic ? 'اختار تصنيف تاني' : 'Choose another category',
-                  style: Theme.of(context).textTheme.titleMedium,
+                  arabic
+                      ? 'التصنيف الحالي: $current'
+                      : 'Current category: $current',
                 ),
-                const SizedBox(height: 12),
+              ],
+              const SizedBox(height: 12),
+              if (widget.categories.isEmpty)
+                Text(
+                  arabic
+                      ? 'مفيش تصنيفات محفوظة. اكتب اسم جديد.'
+                      : 'No saved categories yet. Type a new name.',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                )
+              else
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    for (final category in categories)
+                    for (final category in widget.categories)
                       ActionChip(
                         label: Text(category.name),
                         onPressed: () => Navigator.pop(context, category),
                       ),
                   ],
                 ),
-              ],
-            ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _name,
+                textInputAction: TextInputAction.done,
+                decoration: InputDecoration(
+                  labelText: arabic ? 'تصنيف جديد' : 'Custom category',
+                  errorText: _error,
+                ),
+                onChanged: (_) => setState(() => _error = null),
+                onSubmitted: (_) => _saveCustom(),
+              ),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: _name.text.trim().isEmpty ? null : _saveCustom,
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppConstants.primaryColor,
+                  foregroundColor: Colors.white,
+                ),
+                child: Text(arabic ? 'حفظ' : 'Save'),
+              ),
+            ],
           ),
         ),
       ),
