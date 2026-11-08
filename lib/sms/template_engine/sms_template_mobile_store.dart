@@ -215,6 +215,7 @@ class SmsTemplateMobileStore {
 
   static const enabledKey = 'sms_templates_v2_enabled';
   static const lastSyncKey = 'sms_templates_v2_last_sync';
+  static const activatedAtKey = 'sms_templates_v2_activated_at';
 
   Future<Database> get _db => DatabaseHelper.instance.database;
 
@@ -237,6 +238,26 @@ class SmsTemplateMobileStore {
   Future<void> setLastSyncAt(DateTime date) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(lastSyncKey, date.millisecondsSinceEpoch);
+  }
+
+  Future<DateTime?> activatedAt() async {
+    final prefs = await SharedPreferences.getInstance();
+    final value = prefs.getInt(activatedAtKey);
+    if (value == null) return null;
+    return DateTime.fromMillisecondsSinceEpoch(value);
+  }
+
+  /// Keeps the first activation day. Writes the start of today when missing.
+  Future<DateTime> ensureActivatedAt() async {
+    final existing = await activatedAt();
+    if (existing != null) {
+      return DateTime(existing.year, existing.month, existing.day);
+    }
+    final now = DateTime.now();
+    final start = DateTime(now.year, now.month, now.day);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(activatedAtKey, start.millisecondsSinceEpoch);
+    return start;
   }
 
   Future<List<SmsTemplateBank>> getBanks() async {

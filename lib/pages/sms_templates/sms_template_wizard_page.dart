@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart' hide TextDirection;
 
 import 'package:money_traker/constants/app_constants.dart';
+import 'package:money_traker/services/sms_template_sync_service.dart';
 import 'package:money_traker/sms/template_engine/sms_amount_parser.dart';
 import 'package:money_traker/sms/template_engine/sms_template_compiler.dart';
 import 'package:money_traker/sms/template_engine/sms_template_mobile_store.dart';
@@ -137,54 +139,8 @@ class _SmsTemplateWizardPageState extends State<SmsTemplateWizardPage> {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (context) => FractionallySizedBox(
-        heightFactor: .78,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
-              child: Text(
-                'Choose a real message',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-            ),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20),
-              child: Text('Pick one example of the format you want to teach.'),
-            ),
-            const SizedBox(height: 10),
-            Expanded(
-              child: messages.isEmpty
-                  ? const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(28),
-                        child: Text(
-                          'No messages yet. Go back and read messages first.',
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    )
-                  : ListView.separated(
-                      padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
-                      itemCount: messages.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (context, index) => ListTile(
-                        title: Text(
-                          messages[index].body,
-                          textDirection: _messageDirection(
-                            messages[index].body,
-                          ),
-                          maxLines: 4,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        onTap: () => Navigator.pop(context, messages[index]),
-                      ),
-                    ),
-            ),
-          ],
-        ),
-      ),
+      builder: (context) =>
+          _ChooseMessageSheet(bank: widget.bank, saved: messages),
     );
   }
 
@@ -555,7 +511,10 @@ class _SmsTemplateWizardPageState extends State<SmsTemplateWizardPage> {
       ),
     );
     if (save != true || compiled == null) return;
-    await SmsTemplateMobileStore.instance.saveTemplate(template);
+    await SmsTemplateSyncService.instance.saveTaughtTemplate(
+      template: template,
+      message: message,
+    );
     if (!mounted) return;
     Navigator.pop(context, true);
   }
@@ -614,6 +573,230 @@ class _SmsTemplateWizardPageState extends State<SmsTemplateWizardPage> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _ChooseMessageSheet extends StatelessWidget {
+  final SmsTemplateBank bank;
+  final List<SmsTemplateStoredMessage> saved;
+
+  const _ChooseMessageSheet({required this.bank, required this.saved});
+
+  @override
+  Widget build(BuildContext context) {
+    return FractionallySizedBox(
+      heightFactor: .78,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+            child: Text(
+              'Choose a real message',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 20),
+            child: Text('Pick one example of the format you want to teach.'),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+            child: SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () async {
+                  final picked =
+                      await showModalBottomSheet<SmsTemplateStoredMessage>(
+                        context: context,
+                        isScrollControlled: true,
+                        showDragHandle: true,
+                        builder: (context) =>
+                            _PreviousMessagesSheet(bank: bank),
+                      );
+                  if (picked != null && context.mounted) {
+                    Navigator.pop(context, picked);
+                  }
+                },
+                icon: const Icon(Icons.history),
+                label: const Text('Browse inbox'),
+              ),
+            ),
+          ),
+          Expanded(
+            child: saved.isEmpty
+                ? const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(28),
+                      child: Text(
+                        'No saved messages yet. Browse the inbox and create a template from one message.',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
+                    itemCount: saved.length,
+                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    itemBuilder: (context, index) => ListTile(
+                      title: Text(
+                        saved[index].body,
+                        textDirection: _messageDirection(saved[index].body),
+                        maxLines: 4,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        DateFormat('d MMM, HH:mm').format(saved[index].date),
+                      ),
+                      onTap: () => Navigator.pop(context, saved[index]),
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PreviousMessagesSheet extends StatefulWidget {
+  final SmsTemplateBank bank;
+
+  const _PreviousMessagesSheet({required this.bank});
+
+  @override
+  State<_PreviousMessagesSheet> createState() => _PreviousMessagesSheetState();
+}
+
+class _PreviousMessagesSheetState extends State<_PreviousMessagesSheet> {
+  List<SmsTemplateStoredMessage> _messages = const [];
+  bool _loading = false;
+  bool _started = false;
+  bool _hasMore = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadMore());
+  }
+
+  Future<void> _loadMore() async {
+    if (_loading || !_hasMore) return;
+    setState(() {
+      _loading = true;
+      _started = true;
+      _error = null;
+    });
+    final result = await SmsTemplateSyncService.instance.previewInboxPage(
+      bankId: widget.bank.id,
+      senders: widget.bank.senders,
+      offset: _messages.length,
+    );
+    if (!mounted) return;
+    final error = !result.supported
+        ? 'SMS reading is available on Android only.'
+        : !result.permissionGranted
+        ? 'SMS permission was not granted.'
+        : result.error;
+    setState(() {
+      _loading = false;
+      if (error != null) {
+        _error = error;
+        return;
+      }
+      _messages = [..._messages, ...result.messages];
+      _hasMore = result.messages.length >= smsInboxPreviewPageSize;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FractionallySizedBox(
+      heightFactor: .86,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: Text(
+              'Inbox messages',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 20),
+            child: Text(
+              'Ten messages load at a time and stay in memory. A message is saved only after you create a template from it.',
+            ),
+          ),
+          if (_error != null && _messages.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+              child: Text(
+                _error!,
+                style: const TextStyle(color: AppConstants.errorColor),
+              ),
+            ),
+          if ((!_started || _loading) && _messages.isEmpty)
+            const Expanded(child: Center(child: CircularProgressIndicator()))
+          else if (_messages.isEmpty)
+            Expanded(
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(28),
+                  child: Text(
+                    _error ?? 'No messages from this bank were found.',
+                    textAlign: TextAlign.center,
+                    style: _error == null
+                        ? null
+                        : const TextStyle(color: AppConstants.errorColor),
+                  ),
+                ),
+              ),
+            )
+          else
+            Expanded(
+              child: ListView.separated(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+                itemCount: _messages.length + (_hasMore ? 1 : 0),
+                separatorBuilder: (_, _) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  if (index == _messages.length) {
+                    return Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
+                      child: OutlinedButton(
+                        onPressed: _loading ? null : _loadMore,
+                        child: _loading
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Text('Load more'),
+                      ),
+                    );
+                  }
+                  final message = _messages[index];
+                  return ListTile(
+                    title: Text(
+                      message.body,
+                      textDirection: _messageDirection(message.body),
+                      maxLines: 4,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text(
+                      '${message.sender} • ${DateFormat('d MMM, HH:mm').format(message.date)}',
+                    ),
+                    onTap: () => Navigator.pop(context, message),
+                  );
+                },
+              ),
+            ),
+        ],
       ),
     );
   }

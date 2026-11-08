@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart';
@@ -382,6 +384,130 @@ void main() {
     expect(find.text('Undo change'), findsOneWidget);
     expect(find.textContaining('Template card'), findsOneWidget);
   });
+
+  test('sync cutoff starts on the activation day', () {
+    final activated = DateTime(2026, 11, 8, 19, 40);
+
+    expect(smsTemplateSyncAfter(activatedAt: activated), DateTime(2026, 11, 8));
+    expect(
+      smsTemplateSyncAfter(
+        activatedAt: activated,
+        lastSync: DateTime(2026, 11, 8, 0, 1),
+      ),
+      DateTime(2026, 11, 8),
+    );
+    expect(
+      smsTemplateSyncAfter(
+        activatedAt: DateTime(2026, 10, 1),
+        lastSync: DateTime(2026, 11, 8, 12),
+      ),
+      DateTime(2026, 11, 8, 11, 58),
+    );
+  });
+
+  test(
+    'enabling SMS Templates records the start of that day and keeps it',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final today = DateTime.now();
+      final start = DateTime(today.year, today.month, today.day);
+
+      final enabled = await SmsTemplateSyncService.instance.setEnabled(true);
+      expect(enabled, SmsTemplateEnableResult.enabled);
+      expect(await SmsTemplateMobileStore.instance.activatedAt(), start);
+
+      await SmsTemplateSyncService.instance.setEnabled(false);
+      final again = await SmsTemplateSyncService.instance.setEnabled(true);
+
+      expect(again, SmsTemplateEnableResult.enabled);
+      expect(await SmsTemplateMobileStore.instance.activatedAt(), start);
+    },
+  );
+
+  test(
+    'an already enabled feature without an activation day starts today',
+    () async {
+      SharedPreferences.setMockInitialValues({
+        SmsTemplateMobileStore.enabledKey: true,
+      });
+      final today = DateTime.now();
+
+      final activated = await SmsTemplateMobileStore.instance
+          .ensureActivatedAt();
+      final again = await SmsTemplateMobileStore.instance.ensureActivatedAt();
+
+      expect(activated, DateTime(today.year, today.month, today.day));
+      expect(again, activated);
+    },
+  );
+
+  test('inbox pages request 10 messages at a time', () {
+    expect(
+      smsInboxPageSort(limit: smsInboxPreviewPageSize, offset: 0),
+      'date DESC LIMIT 10 OFFSET 0',
+    );
+    expect(
+      smsInboxPageSort(limit: smsInboxPreviewPageSize, offset: 10),
+      'date DESC LIMIT 10 OFFSET 10',
+    );
+    final filter = smsInboxSenderFilter(const [' HSBC ', 'CIB']);
+    expect(filter?.selection, 'address = ? OR address = ?');
+    expect(filter?.args, ['HSBC', 'CIB']);
+    expect(smsInboxSenderFilter(const [' ', '']), isNull);
+  });
+
+  test(
+    'only the taught message is stored, and inbox pages stay in memory',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      const body = 'Debited EGP 20.00 at SHOP';
+      const template = SmsTemplate(
+        id: 'template-inbox-sample',
+        bankId: 'hsbc-sample',
+        sampleText: body,
+        type: SmsTemplateType.debit,
+        amount: SmsPlaceholder(
+          kind: SmsPlaceholderKind.amount,
+          range: SmsTextRange(start: 12, end: 17),
+        ),
+        directionRanges: [SmsTextRange(start: 0, end: 7)],
+      );
+      final message = SmsTemplateStoredMessage(
+        hash: 'hsbc-sample-message',
+        smsId: 'sms-1',
+        sender: 'HSBC',
+        body: body,
+        date: DateTime(2026, 10, 1),
+        bankId: 'hsbc-sample',
+        status: SmsTemplateMessageStatus.pending,
+        copiedAt: DateTime(2026, 11, 8),
+      );
+      final store = SmsTemplateMobileStore.instance;
+
+      if (!kIsWeb && !Platform.isAndroid) {
+        final preview = await SmsTemplateSyncService.instance.previewInboxPage(
+          bankId: 'hsbc-sample',
+          senders: const ['HSBC'],
+          offset: 0,
+        );
+        expect(preview.supported, isFalse);
+        expect(preview.messages, isEmpty);
+        expect(await store.getMessages(bankId: 'hsbc-sample'), isEmpty);
+      }
+
+      await SmsTemplateSyncService.instance.saveTaughtTemplate(
+        template: template,
+        message: message,
+      );
+
+      final templates = await store.getTemplates(bankId: 'hsbc-sample');
+      expect(templates.single.sampleText, body);
+      final saved = await store.getMessages(bankId: 'hsbc-sample');
+      expect(saved, hasLength(1));
+      expect(saved.single.body, body);
+      expect(saved.single.templateId, template.id);
+    },
+  );
 }
 
 Future<void> _waitForText(WidgetTester tester, String text) async {

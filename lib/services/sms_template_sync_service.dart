@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:telephony/telephony.dart';
 
 import 'package:money_traker/data/database_helper.dart';
@@ -14,6 +15,51 @@ import 'package:money_traker/sms/template_engine/template_models.dart';
 import 'package:money_traker/store/money_storage.dart';
 
 enum SmsTemplateEnableResult { enabled, disabled, oldSystemActive }
+
+const smsInboxPreviewPageSize = 10;
+
+const _inboxChannel = MethodChannel(
+  'plugins.shounakmulay.com/foreground_sms_channel',
+);
+
+/// Android accepts LIMIT and OFFSET in the SMS provider sort clause.
+String smsInboxPageSort({required int limit, required int offset}) {
+  final safeLimit = limit < 1 ? smsInboxPreviewPageSize : limit;
+  final safeOffset = offset < 0 ? 0 : offset;
+  return 'date DESC LIMIT $safeLimit OFFSET $safeOffset';
+}
+
+({String selection, List<String> args})? smsInboxSenderFilter(
+  List<String> senders,
+) {
+  final cleaned = [
+    for (final sender in senders)
+      if (sender.trim().isNotEmpty) sender.trim(),
+  ];
+  if (cleaned.isEmpty) return null;
+  return (
+    selection: List.filled(cleaned.length, 'address = ?').join(' OR '),
+    args: cleaned,
+  );
+}
+
+/// First sync starts at the beginning of the activation day.
+/// Later syncs start at the later of that day and the last sync minus 2 minutes.
+DateTime smsTemplateSyncAfter({
+  required DateTime activatedAt,
+  DateTime? lastSync,
+}) {
+  final activationStart = DateTime(
+    activatedAt.year,
+    activatedAt.month,
+    activatedAt.day,
+  );
+  if (lastSync == null) return activationStart;
+  final fromLastSync = lastSync.subtract(const Duration(minutes: 2));
+  return fromLastSync.isBefore(activationStart)
+      ? activationStart
+      : fromLastSync;
+}
 
 class SmsTemplateSyncResult {
   final bool supported;
@@ -43,6 +89,20 @@ class SmsTemplateSyncResult {
   static const unsupported = SmsTemplateSyncResult(supported: false);
 }
 
+class SmsTemplateInboxPreview {
+  final bool supported;
+  final bool permissionGranted;
+  final List<SmsTemplateStoredMessage> messages;
+  final String? error;
+
+  const SmsTemplateInboxPreview({
+    this.supported = true,
+    this.permissionGranted = true,
+    this.messages = const [],
+    this.error,
+  });
+}
+
 class SmsTemplateSyncService {
   SmsTemplateSyncService._();
   static final instance = SmsTemplateSyncService._();
@@ -62,6 +122,7 @@ class SmsTemplateSyncService {
         oldConfig.started && oldConfig.banks.any((bank) => bank.enabled);
     if (oldIsActive) return SmsTemplateEnableResult.oldSystemActive;
     await _store.setEnabled(true);
+    await _store.ensureActivatedAt();
     return SmsTemplateEnableResult.enabled;
   }
 
@@ -77,10 +138,12 @@ class SmsTemplateSyncService {
       if (permission != true) {
         return const SmsTemplateSyncResult(permissionGranted: false);
       }
+      final activatedAt = await _store.ensureActivatedAt();
       final lastSync = await _store.lastSyncAt();
-      final after =
-          (lastSync ?? DateTime.now().subtract(const Duration(days: 30)))
-              .subtract(const Duration(minutes: 2));
+      final after = smsTemplateSyncAfter(
+        activatedAt: activatedAt,
+        lastSync: lastSync,
+      );
       final smsList = await _telephony.getInboxSms(
         columns: const [
           SmsColumn.ID,
@@ -120,6 +183,92 @@ class SmsTemplateSyncService {
       debugPrint('SMS Templates sync failed: $error\n$stackTrace');
       return SmsTemplateSyncResult(error: error.toString());
     }
+  }
+
+  /// Reads one page of matching inbox messages for teaching a template.
+  /// Nothing is written here. The chosen message is stored only after a
+  /// template is saved from it.
+  Future<SmsTemplateInboxPreview> previewInboxPage({
+    required String bankId,
+    required List<String> senders,
+    required int offset,
+    int limit = smsInboxPreviewPageSize,
+  }) async {
+    if (kIsWeb || !Platform.isAndroid) {
+      return const SmsTemplateInboxPreview(supported: false);
+    }
+    final filter = smsInboxSenderFilter(senders);
+    if (filter == null) {
+      return const SmsTemplateInboxPreview();
+    }
+    try {
+      final permission = await _telephony.requestSmsPermissions;
+      if (permission != true) {
+        return const SmsTemplateInboxPreview(permissionGranted: false);
+      }
+      final raw = await _inboxChannel.invokeMethod<List<dynamic>>(
+        'getAllInboxSms',
+        {
+          'projection': ['_id', 'address', 'body', 'date'],
+          'selection': filter.selection,
+          'selection_args': filter.args,
+          'sort_order': smsInboxPageSort(limit: limit, offset: offset),
+        },
+      );
+      final messages = <SmsTemplateStoredMessage>[];
+      for (final item in raw ?? const <dynamic>[]) {
+        if (item is! Map) continue;
+        final map = Map<String, dynamic>.from(item);
+        final sender = map['address']?.toString().trim();
+        final body = map['body']?.toString();
+        if (sender == null || sender.isEmpty || body == null || body.isEmpty) {
+          continue;
+        }
+        if (!_senderMatches(sender, senders)) continue;
+        final dateMillis = int.tryParse(map['date']?.toString() ?? '');
+        final smsId =
+            map['_id']?.toString() ??
+            '${dateMillis ?? 0}:${sender.hashCode}:${body.hashCode}';
+        messages.add(
+          SmsTemplateStoredMessage(
+            hash: SmsHash.of(smsId: smsId, sender: sender, body: body),
+            smsId: smsId,
+            sender: sender,
+            body: body,
+            date: dateMillis == null
+                ? DateTime.now()
+                : DateTime.fromMillisecondsSinceEpoch(dateMillis),
+            bankId: bankId,
+            status: SmsTemplateMessageStatus.pending,
+            copiedAt: DateTime.now(),
+          ),
+        );
+      }
+      return SmsTemplateInboxPreview(messages: messages);
+    } catch (error, stackTrace) {
+      debugPrint('SMS Templates inbox preview failed: $error\n$stackTrace');
+      return SmsTemplateInboxPreview(error: error.toString());
+    }
+  }
+
+  Future<void> saveTaughtTemplate({
+    required SmsTemplate template,
+    required SmsTemplateStoredMessage message,
+  }) async {
+    await _store.saveTemplate(template);
+    await _store.upsertMessage(
+      SmsTemplateStoredMessage(
+        hash: message.hash,
+        smsId: message.smsId,
+        sender: message.sender,
+        body: message.body,
+        date: message.date,
+        bankId: template.bankId,
+        status: SmsTemplateMessageStatus.parsed,
+        templateId: template.id,
+        copiedAt: DateTime.now(),
+      ),
+    );
   }
 
   Future<SmsTemplateSyncResult> reprocessBank(String bankId) async {

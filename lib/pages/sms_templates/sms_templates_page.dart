@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import 'package:money_traker/constants/app_constants.dart';
 import 'package:money_traker/model/money_source.dart';
@@ -22,6 +23,7 @@ class _SmsTemplatesPageState extends State<SmsTemplatesPage> {
   bool _loading = true;
   bool _busy = false;
   bool _enabled = false;
+  DateTime? _activatedAt;
   List<SmsTemplateBank> _banks = const [];
   List<SmsTemplateStoredMessage> _messages = const [];
   List<SmsTemplateApplication> _applications = const [];
@@ -36,6 +38,9 @@ class _SmsTemplatesPageState extends State<SmsTemplatesPage> {
 
   Future<void> _load() async {
     final enabled = await _store.isEnabled();
+    final activatedAt = enabled
+        ? await _store.ensureActivatedAt()
+        : await _store.activatedAt();
     final banks = await _store.getBanks();
     final templates = await _store.getTemplates();
     final messages = await _store.getMessages();
@@ -44,6 +49,7 @@ class _SmsTemplatesPageState extends State<SmsTemplatesPage> {
     if (!mounted) return;
     setState(() {
       _enabled = enabled;
+      _activatedAt = activatedAt;
       _banks = banks;
       _messages = messages;
       _applications = applications;
@@ -58,13 +64,24 @@ class _SmsTemplatesPageState extends State<SmsTemplatesPage> {
     });
   }
 
+  String _activationLabel() {
+    final date = _activatedAt;
+    if (date == null) return 'today';
+    return DateFormat('d MMM yyyy').format(date);
+  }
+
   Future<void> _toggle(bool value) async {
     setState(() => _busy = true);
     final result = await SmsTemplateSyncService.instance.setEnabled(value);
     if (!mounted) return;
+    final activatedAt = result == SmsTemplateEnableResult.enabled
+        ? await _store.activatedAt()
+        : _activatedAt;
+    if (!mounted) return;
     setState(() {
       _busy = false;
       _enabled = result == SmsTemplateEnableResult.enabled;
+      _activatedAt = activatedAt;
     });
     if (result == SmsTemplateEnableResult.oldSystemActive) {
       await showModalBottomSheet<void>(
@@ -244,7 +261,7 @@ class _SmsTemplatesPageState extends State<SmsTemplatesPage> {
                 title: Text(_enabled ? 'Reading is on' : 'Reading is off'),
                 subtitle: Text(
                   _enabled
-                      ? 'New matching messages can update their money source.'
+                      ? 'Reading messages from ${_activationLabel()}. New matches can update their money source.'
                       : 'No SMS is read or applied while this is off.',
                 ),
               ),
