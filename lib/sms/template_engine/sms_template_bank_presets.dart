@@ -37,26 +37,14 @@ class SmsTemplateBankPreset {
       name: 'Alex Bank',
       senders: ['AlexBank', 'ABE'],
     ),
-    SmsTemplateBankPreset(
-      id: 'adcb',
-      name: 'ADCB',
-      senders: ['ADCB'],
-    ),
-    SmsTemplateBankPreset(
-      id: 'hsbc',
-      name: 'HSBC',
-      senders: ['HSBC'],
-    ),
+    SmsTemplateBankPreset(id: 'adcb', name: 'ADCB', senders: ['ADCB']),
+    SmsTemplateBankPreset(id: 'hsbc', name: 'HSBC', senders: ['HSBC']),
     SmsTemplateBankPreset(
       id: 'banque_du_caire',
       name: 'Banque du Caire',
       senders: ['BdC', 'BanqueDuCaire'],
     ),
-    SmsTemplateBankPreset(
-      id: 'aaib',
-      name: 'AAIB',
-      senders: ['AAIB'],
-    ),
+    SmsTemplateBankPreset(id: 'aaib', name: 'AAIB', senders: ['AAIB']),
     SmsTemplateBankPreset(
       id: 'fawry',
       name: 'Fawry',
@@ -81,11 +69,6 @@ class SmsTemplateBankPreset {
       id: 'we_pay',
       name: 'WE Pay',
       senders: ['WE', 'WEPay'],
-    ),
-    SmsTemplateBankPreset(
-      id: 'instapay',
-      name: 'InstaPay',
-      senders: ['InstaPay', 'IPN'],
     ),
   ];
 }

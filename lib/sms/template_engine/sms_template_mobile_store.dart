@@ -241,27 +241,10 @@ class SmsTemplateMobileStore {
 
   Future<List<SmsTemplateBank>> getBanks() async {
     final db = await _db;
-    final prefs = await SharedPreferences.getInstance();
-    var rows = await db.query(
+    final rows = await db.query(
       'sms_template_banks_v2',
       orderBy: 'created_at ASC',
     );
-    final initialized = prefs.getBool(banksInitializedKey) ?? false;
-    if (rows.isEmpty && !initialized) {
-      final now = DateTime.now();
-      for (final bank in BankConfig.defaults()) {
-        await saveBank(
-          SmsTemplateBank(
-            id: bank.id,
-            name: bank.nameEn,
-            senders: bank.senders,
-            createdAt: now,
-          ),
-        );
-      }
-      rows = await db.query('sms_template_banks_v2', orderBy: 'created_at ASC');
-    }
-    if (!initialized) await prefs.setBool(banksInitializedKey, true);
     return rows.map(SmsTemplateBank.fromMap).toList();
   }
 
