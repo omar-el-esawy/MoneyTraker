@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -61,6 +62,12 @@ DateTime smsTemplateSyncAfter({
   return fromLastSync.isBefore(activationStart)
       ? activationStart
       : fromLastSync;
+}
+
+DateTime? smsTemplateLatestSync(DateTime? global, DateTime? bank) {
+  if (global == null) return bank;
+  if (bank == null) return global;
+  return bank.isAfter(global) ? bank : global;
 }
 
 /// The message used to teach a template changes the balance only when it
@@ -140,6 +147,7 @@ class SmsTemplateSyncService {
   final _store = SmsTemplateMobileStore.instance;
   final _db = DatabaseHelper.instance;
   final _moneyStorage = MoneyStorage();
+  Future<void> _processTail = Future.value();
 
   Future<SmsTemplateEnableResult> setEnabled(bool enabled) async {
     if (!enabled) {
@@ -168,7 +176,11 @@ class SmsTemplateSyncService {
         return const SmsTemplateSyncResult(permissionGranted: false);
       }
       final activatedAt = await _store.ensureActivatedAt();
-      final lastSync = await _store.lastSyncAt();
+      final globalLastSync = await _store.lastSyncAt();
+      final bankLastSync = bankId == null
+          ? null
+          : await _store.lastSyncAt(bankId: bankId);
+      final lastSync = smsTemplateLatestSync(globalLastSync, bankLastSync);
       final after = smsTemplateSyncAfter(
         activatedAt: activatedAt,
         lastSync: lastSync,
@@ -206,7 +218,7 @@ class SmsTemplateSyncService {
         );
       }
       final result = await _process(envelopes, bankId: bankId);
-      await _store.setLastSyncAt(DateTime.now());
+      await _store.setLastSyncAt(DateTime.now(), bankId: bankId);
       return result;
     } catch (error, stackTrace) {
       debugPrint('SMS Templates sync failed: $error\n$stackTrace');
@@ -326,6 +338,21 @@ class SmsTemplateSyncService {
   Future<SmsTemplateSyncResult> _process(
     List<_InboxEnvelope> inbox, {
     String? bankId,
+  }) {
+    final completer = Completer<SmsTemplateSyncResult>();
+    _processTail = _processTail.then((_) async {
+      try {
+        completer.complete(await _processUnlocked(inbox, bankId: bankId));
+      } catch (error, stackTrace) {
+        completer.completeError(error, stackTrace);
+      }
+    });
+    return completer.future;
+  }
+
+  Future<SmsTemplateSyncResult> _processUnlocked(
+    List<_InboxEnvelope> inbox, {
+    String? bankId,
   }) async {
     inbox.sort((a, b) => a.date.compareTo(b.date));
     final banks = await _store.getBanks();
@@ -428,7 +455,10 @@ class SmsTemplateSyncService {
         seen.add(stored);
         continue;
       }
-      if (await _db.getTransactionByHash(hash) != null) {
+      final existingTransaction = await _db.getTransactionByHash(hash);
+      final templateOwnedTransaction =
+          existingTransaction?.ruleId?.startsWith('sms-template-v2:') == true;
+      if (existingTransaction != null && !templateOwnedTransaction) {
         duplicates++;
         final stored = _storedMessage(
           item,
@@ -474,6 +504,9 @@ class SmsTemplateSyncService {
         item: item,
         hash: hash,
         result: result,
+        existingTransaction: templateOwnedTransaction
+            ? existingTransaction
+            : null,
       );
       if (didApply) applied++;
     }
@@ -493,41 +526,75 @@ class SmsTemplateSyncService {
     required _InboxEnvelope item,
     required String hash,
     required SmsParsedResult result,
+    TransactionEntity? existingTransaction,
   }) async {
     final sources = await _moneyStorage.getMoneySources();
     final source = sources
         .where((candidate) => candidate.id == bank.sourceId)
         .firstOrNull;
     if (source == null || source.id == null) return false;
-    final change = smsTemplateMoneyChange(
-      result: result,
-      sourceAmount: source.amount,
+    final operationKey = 'sms-template-v2:$hash';
+    var moneyResult = await SmsSourceApplier.instance.resultForOperation(
+      operationKey,
     );
-    final debit = change.debit;
-    final delta = change.delta;
-    final applied = await SmsSourceApplier.instance.applySignedDelta(
-      sourceId: source.id!,
-      delta: delta,
-      date: item.date,
-      note: 'SMS Templates • ${bank.name}',
-    );
-    if (!applied) return false;
-
-    final saved = await _db.upsertTransaction(
-      TransactionEntity(
-        bank: bank.name,
-        amount: change.recordedAmount,
-        type: debit ? TransactionType.debit : TransactionType.credit,
+    late final bool debit;
+    late final double recordedAmount;
+    if (moneyResult != null) {
+      if (moneyResult.sourceId != source.id) {
+        throw StateError('SMS money operation belongs to another source');
+      }
+      debit = moneyResult.delta < 0;
+      recordedAmount = moneyResult.delta.abs();
+    } else if (existingTransaction != null) {
+      // Older builds wrote the transaction after changing the source but did
+      // not have an idempotency key. Rebuild the missing application without
+      // moving money a second time.
+      debit = existingTransaction.type == TransactionType.debit;
+      final delta = debit
+          ? -existingTransaction.amount
+          : existingTransaction.amount;
+      recordedAmount = existingTransaction.amount;
+      moneyResult = MoneySourceDeltaResult(
+        sourceId: source.id!,
+        newlyApplied: false,
+        beforeAmount: source.amount - delta,
+        afterAmount: source.amount,
+        delta: delta,
+      );
+    } else {
+      final change = smsTemplateMoneyChange(
+        result: result,
+        sourceAmount: source.amount,
+      );
+      debit = change.debit;
+      recordedAmount = change.recordedAmount;
+      moneyResult = await SmsSourceApplier.instance.applySignedDeltaOnce(
+        sourceId: source.id!,
+        delta: change.delta,
         date: item.date,
-        rawSms: item.body,
-        smsId: item.smsId,
-        balance: result.balance,
-        accountHint: result.merchant,
-        smsHash: hash,
-        ruleId: 'sms-template-v2:${result.templateId}',
-        ruleVersion: 1,
-      ),
-    );
+        operationKey: operationKey,
+        note: 'SMS Templates • ${bank.name}',
+      );
+      if (moneyResult == null) return false;
+    }
+
+    final saved =
+        existingTransaction ??
+        await _db.upsertTransaction(
+          TransactionEntity(
+            bank: bank.name,
+            amount: recordedAmount,
+            type: debit ? TransactionType.debit : TransactionType.credit,
+            date: item.date,
+            rawSms: item.body,
+            smsId: item.smsId,
+            balance: result.balance,
+            accountHint: result.merchant,
+            smsHash: hash,
+            ruleId: 'sms-template-v2:${result.templateId}',
+            ruleVersion: 1,
+          ),
+        );
     await _assignWordCategory(
       bankId: bank.id,
       transaction: saved,
@@ -543,10 +610,10 @@ class SmsTemplateSyncService {
         templateId: result.templateId,
         sourceId: source.id!,
         sourceName: source.name,
-        amount: change.recordedAmount,
-        delta: delta,
-        beforeAmount: source.amount,
-        afterAmount: source.amount + delta,
+        amount: recordedAmount,
+        delta: moneyResult.delta,
+        beforeAmount: moneyResult.beforeAmount,
+        afterAmount: moneyResult.afterAmount,
         occurredAt: item.date,
         rawSms: item.body,
         createdAt: DateTime.now(),

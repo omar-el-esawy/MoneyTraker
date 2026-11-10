@@ -1,7 +1,6 @@
-import 'dart:math' as math;
-
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+import 'package:money_traker/model/day_delta_balance.dart';
 import 'package:money_traker/model/mission.dart';
 import 'package:money_traker/model/money_source.dart';
 import 'package:money_traker/model/total_money_day.dart';
@@ -9,6 +8,22 @@ import 'package:money_traker/model/total_money_day_delta_entry.dart';
 import 'package:money_traker/model/tag.dart';
 import 'package:money_traker/model/goal.dart';
 import 'package:money_traker/model/money_source_change.dart';
+
+class MoneySourceDeltaResult {
+  final int sourceId;
+  final bool newlyApplied;
+  final double beforeAmount;
+  final double afterAmount;
+  final double delta;
+
+  const MoneySourceDeltaResult({
+    required this.sourceId,
+    required this.newlyApplied,
+    required this.beforeAmount,
+    required this.afterAmount,
+    required this.delta,
+  });
+}
 
 class MoneyStorage {
   static final MoneyStorage _instance = MoneyStorage._internal();
@@ -30,7 +45,7 @@ class MoneyStorage {
 
     return await openDatabase(
       path,
-      version: 8,
+      version: 9,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE missions (
@@ -101,7 +116,9 @@ class MoneyStorage {
             createdAt TEXT NOT NULL
           )
         ''');
-        await db.execute('CREATE INDEX idx_goals_active_createdAt ON goals(isActive, createdAt)');
+        await db.execute(
+          'CREATE INDEX idx_goals_active_createdAt ON goals(isActive, createdAt)',
+        );
         await db.execute('CREATE INDEX idx_goals_isMain ON goals(isMain)');
 
         await db.execute('''
@@ -113,10 +130,17 @@ class MoneyStorage {
             createdAt TEXT NOT NULL,
             type TEXT NOT NULL,
             note TEXT,
+            operationKey TEXT,
             FOREIGN KEY(sourceId) REFERENCES money_sources(id) ON DELETE CASCADE
           )
         ''');
-        await db.execute('CREATE INDEX idx_source_changes_source_created ON money_source_changes(sourceId, createdAt)');
+        await db.execute(
+          'CREATE INDEX idx_source_changes_source_created ON money_source_changes(sourceId, createdAt)',
+        );
+        await db.execute(
+          'CREATE UNIQUE INDEX idx_source_changes_operation_key '
+          'ON money_source_changes(operationKey) WHERE operationKey IS NOT NULL',
+        );
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         // IMPORTANT: Never drop tables here. Always migrate forward while keeping data.
@@ -197,9 +221,13 @@ class MoneyStorage {
           final cols = await db.rawQuery("PRAGMA table_info('goals')");
           final hasIsMain = cols.any((c) => (c['name'] as String?) == 'isMain');
           if (!hasIsMain) {
-            await db.execute('ALTER TABLE goals ADD COLUMN isMain INTEGER NOT NULL DEFAULT 0');
+            await db.execute(
+              'ALTER TABLE goals ADD COLUMN isMain INTEGER NOT NULL DEFAULT 0',
+            );
           }
-          await db.execute('CREATE INDEX IF NOT EXISTS idx_goals_isMain ON goals(isMain)');
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_goals_isMain ON goals(isMain)',
+          );
         }
 
         if (oldVersion < 8) {
@@ -219,6 +247,26 @@ class MoneyStorage {
             'CREATE INDEX IF NOT EXISTS idx_source_changes_source_created ON money_source_changes(sourceId, createdAt)',
           );
         }
+
+        if (oldVersion < 9) {
+          final columns = await db.rawQuery(
+            "PRAGMA table_info('money_source_changes')",
+          );
+          final hasOperationKey = columns.any(
+            (column) => column['name'] == 'operationKey',
+          );
+          if (!hasOperationKey) {
+            await db.execute(
+              'ALTER TABLE money_source_changes ADD COLUMN operationKey TEXT',
+            );
+          }
+          await db.execute(
+            'CREATE UNIQUE INDEX IF NOT EXISTS '
+            'idx_source_changes_operation_key '
+            'ON money_source_changes(operationKey) '
+            'WHERE operationKey IS NOT NULL',
+          );
+        }
       },
     );
   }
@@ -235,7 +283,12 @@ class MoneyStorage {
   Future<void> updateGoal(Goal goal) async {
     final db = await database;
     if (goal.id == null) throw Exception('updateGoal requires an id');
-    await db.update('goals', goal.toMap(), where: 'id = ?', whereArgs: [goal.id]);
+    await db.update(
+      'goals',
+      goal.toMap(),
+      where: 'id = ?',
+      whereArgs: [goal.id],
+    );
   }
 
   Future<void> deleteGoal(int id) async {
@@ -271,7 +324,12 @@ class MoneyStorage {
       // Clear any existing main goal.
       await txn.update('goals', {'isMain': 0}, where: 'isMain = 1');
       if (goalId != null) {
-        await txn.update('goals', {'isMain': 1}, where: 'id = ?', whereArgs: [goalId]);
+        await txn.update(
+          'goals',
+          {'isMain': 1},
+          where: 'id = ?',
+          whereArgs: [goalId],
+        );
       }
     });
   }
@@ -329,10 +387,117 @@ class MoneyStorage {
     );
   }
 
+  Future<MoneySourceDeltaResult?> applySourceDeltaOnce({
+    required int sourceId,
+    required double delta,
+    required DateTime date,
+    required String operationKey,
+    String? note,
+  }) async {
+    final db = await database;
+    return db.transaction((txn) async {
+      final existingRows = await txn.query(
+        'money_source_changes',
+        where: 'operationKey = ?',
+        whereArgs: [operationKey],
+        limit: 1,
+      );
+      if (existingRows.isNotEmpty) {
+        final existing = MoneySourceChange.fromMap(existingRows.first);
+        if (existing.sourceId != sourceId ||
+            (existing.deltaAmount - delta).abs() > 0.0000001) {
+          throw StateError(
+            'Money operation key was reused with different values',
+          );
+        }
+        return MoneySourceDeltaResult(
+          sourceId: existing.sourceId,
+          newlyApplied: false,
+          beforeAmount: existing.resultingAmount - existing.deltaAmount,
+          afterAmount: existing.resultingAmount,
+          delta: existing.deltaAmount,
+        );
+      }
+
+      final sourceRows = await txn.query(
+        'money_sources',
+        where: 'id = ?',
+        whereArgs: [sourceId],
+        limit: 1,
+      );
+      if (sourceRows.isEmpty) return null;
+      final source = MoneySource.fromMap(sourceRows.first);
+      final beforeAmount = source.amount;
+      if (delta.abs() < 0.0001) {
+        return MoneySourceDeltaResult(
+          sourceId: sourceId,
+          newlyApplied: false,
+          beforeAmount: beforeAmount,
+          afterAmount: beforeAmount,
+          delta: 0,
+        );
+      }
+
+      final afterAmount = beforeAmount + delta;
+      await txn.update(
+        'money_sources',
+        source.copyWith(amount: afterAmount).toMap(),
+        where: 'id = ?',
+        whereArgs: [sourceId],
+      );
+      final change = MoneySourceChange(
+        sourceId: sourceId,
+        deltaAmount: delta,
+        resultingAmount: afterAmount,
+        createdAt: date,
+        type: delta < 0
+            ? MoneySourceChangeType.subtract
+            : MoneySourceChangeType.add,
+        note: note,
+        operationKey: operationKey,
+      );
+      final map = change.toMap()..remove('id');
+      await txn.insert('money_source_changes', map);
+      await _applyAmountDeltaToHistoryTxn(txn, date, delta);
+      return MoneySourceDeltaResult(
+        sourceId: sourceId,
+        newlyApplied: true,
+        beforeAmount: beforeAmount,
+        afterAmount: afterAmount,
+        delta: delta,
+      );
+    });
+  }
+
+  Future<MoneySourceDeltaResult?> sourceDeltaForOperation(
+    String operationKey,
+  ) async {
+    final db = await database;
+    final rows = await db.query(
+      'money_source_changes',
+      where: 'operationKey = ?',
+      whereArgs: [operationKey],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    final change = MoneySourceChange.fromMap(rows.first);
+    return MoneySourceDeltaResult(
+      sourceId: change.sourceId,
+      newlyApplied: false,
+      beforeAmount: change.resultingAmount - change.deltaAmount,
+      afterAmount: change.resultingAmount,
+      delta: change.deltaAmount,
+    );
+  }
+
   Future<void> deleteMoneySource(String id) async {
     final db = await database;
     final parsedId = int.parse(id);
-    await db.delete('money_source_changes', where: 'sourceId = ?', whereArgs: [parsedId]);
+    await db.delete(
+      'money_source_changes',
+      where: 'sourceId = ?',
+      whereArgs: [parsedId],
+    );
     await db.delete('money_sources', where: 'id = ?', whereArgs: [parsedId]);
   }
 
@@ -356,7 +521,11 @@ class MoneyStorage {
 
   Future<void> deleteMoneySourceChange(int changeId) async {
     final db = await database;
-    await db.delete('money_source_changes', where: 'id = ?', whereArgs: [changeId]);
+    await db.delete(
+      'money_source_changes',
+      where: 'id = ?',
+      whereArgs: [changeId],
+    );
   }
 
   // TotalMoneyDay CRUD
@@ -373,48 +542,83 @@ class MoneyStorage {
     return result.map((map) => TotalMoneyDay.fromMap(map)).toList();
   }
 
-  Future<void> applyAmountDeltaToHistory(DateTime effectiveDate, double delta) async {
+  Future<void> applyAmountDeltaToHistory(
+    DateTime effectiveDate,
+    double delta,
+  ) async {
     if (delta.abs() <= 0.0000001) return;
-    final dateOnly = DateTime(effectiveDate.year, effectiveDate.month, effectiveDate.day);
-    final days = await getTotalMoneyDays();
+    final db = await database;
+    await db.transaction(
+      (txn) => _applyAmountDeltaToHistoryTxn(txn, effectiveDate, delta),
+    );
+  }
+
+  Future<void> _applyAmountDeltaToHistoryTxn(
+    Transaction txn,
+    DateTime effectiveDate,
+    double delta,
+  ) async {
+    if (delta.abs() <= 0.0000001) return;
+    final dateOnly = DateTime(
+      effectiveDate.year,
+      effectiveDate.month,
+      effectiveDate.day,
+    );
+    final dayRows = await txn.query('total_money_days');
+    final days = dayRows.map(TotalMoneyDay.fromMap).toList();
     days.sort((a, b) => a.date.compareTo(b.date));
 
-    final existingIndex = days.indexWhere((d) =>
-        d.date.year == dateOnly.year && d.date.month == dateOnly.month && d.date.day == dateOnly.day);
+    final existingIndex = days.indexWhere(
+      (d) =>
+          d.date.year == dateOnly.year &&
+          d.date.month == dateOnly.month &&
+          d.date.day == dateOnly.day,
+    );
 
     if (existingIndex == -1) {
       double baseTotal;
-      final previousDays = days.where((d) => d.date.isBefore(dateOnly)).toList();
+      final previousDays = days
+          .where((d) => d.date.isBefore(dateOnly))
+          .toList();
       if (previousDays.isNotEmpty) {
         previousDays.sort((a, b) => a.date.compareTo(b.date));
         baseTotal = previousDays.last.totalAmount;
       } else if (days.isNotEmpty) {
         baseTotal = days.first.totalAmount;
       } else {
-        final sources = await getMoneySources();
-        baseTotal = sources.fold<double>(0, (sum, source) => sum + source.amount) - delta;
+        final sourceRows = await txn.query('money_sources');
+        final sourceTotal = sourceRows.fold<double>(
+          0,
+          (sum, row) => sum + ((row['amount'] as num?)?.toDouble() ?? 0),
+        );
+        baseTotal = sourceTotal - delta;
       }
-      await addTotalMoneyDay(TotalMoneyDay.create(date: dateOnly, totalAmount: baseTotal + delta));
+      final day = TotalMoneyDay.create(
+        date: dateOnly,
+        totalAmount: baseTotal + delta,
+      ).toMap()..remove('id');
+      await txn.insert('total_money_days', day);
     } else {
       final day = days[existingIndex];
-      await updateTotalMoneyDay(TotalMoneyDay(
-        id: day.id,
-        date: day.date,
-        totalAmount: day.totalAmount + delta,
-        note: day.note,
-      ));
+      await txn.update(
+        'total_money_days',
+        {'totalAmount': day.totalAmount + delta},
+        where: 'id = ?',
+        whereArgs: [day.id],
+      );
     }
 
-    final refreshed = await getTotalMoneyDays();
-    for (final day in refreshed) {
+    final refreshedRows = await txn.query('total_money_days');
+    for (final row in refreshedRows) {
+      final day = TotalMoneyDay.fromMap(row);
       final dayOnly = DateTime(day.date.year, day.date.month, day.date.day);
       if (!dayOnly.isAfter(dateOnly)) continue;
-      await updateTotalMoneyDay(TotalMoneyDay(
-        id: day.id,
-        date: day.date,
-        totalAmount: day.totalAmount + delta,
-        note: day.note,
-      ));
+      await txn.update(
+        'total_money_days',
+        {'totalAmount': day.totalAmount + delta},
+        where: 'id = ?',
+        whereArgs: [day.id],
+      );
     }
   }
 
@@ -455,7 +659,11 @@ class MoneyStorage {
 
   Future<void> deleteTotalMoneyDay(String id) async {
     final db = await database;
-    await db.delete('total_money_days', where: 'id = ?', whereArgs: [int.parse(id)]);
+    await db.delete(
+      'total_money_days',
+      where: 'id = ?',
+      whereArgs: [int.parse(id)],
+    );
   }
 
   Future<void> clearTotalMoneyDayNote(int dayId) async {
@@ -482,7 +690,10 @@ class MoneyStorage {
     );
     if (existing.isNotEmpty) return Tag.fromMap(existing.first);
 
-    final id = await db.insert('tags', {'name': normalized, 'type': type.dbValue});
+    final id = await db.insert('tags', {
+      'name': normalized,
+      'type': type.dbValue,
+    });
     return Tag(id: id, name: normalized, type: type);
   }
 
@@ -502,10 +713,7 @@ class MoneyStorage {
     await db.delete('tags', where: 'id = ?', whereArgs: [id]);
   }
 
-  Future<void> renameTag({
-    required int id,
-    required String newName,
-  }) async {
+  Future<void> renameTag({required int id, required String newName}) async {
     final db = await database;
     final normalized = newName.trim();
     if (normalized.isEmpty) {
@@ -531,18 +739,25 @@ class MoneyStorage {
     return rows.map(TotalMoneyDayDeltaEntry.fromMap).toList();
   }
 
-  Future<List<Map<String, dynamic>>> getDeltaEntriesForDayDetailed(int dayId) async {
+  Future<List<Map<String, dynamic>>> getDeltaEntriesForDayDetailed(
+    int dayId,
+  ) async {
     final db = await database;
-    final rows = await db.rawQuery('''
+    final rows = await db.rawQuery(
+      '''
       SELECT e.id, e.dayId, e.tagId, e.amount, e.autoBalanced, t.name AS tagName, t.type AS tagType
       FROM total_money_day_delta_entries e
       JOIN tags t ON t.id = e.tagId
       WHERE e.dayId = ?
-    ''', [dayId]);
+    ''',
+      [dayId],
+    );
     return rows;
   }
 
-  Future<Map<int, DayDeltaCategorySummary>> getDeltaSummariesForDays(List<int> dayIds) async {
+  Future<Map<int, DayDeltaCategorySummary>> getDeltaSummariesForDays(
+    List<int> dayIds,
+  ) async {
     if (dayIds.isEmpty) return {};
 
     final db = await database;
@@ -577,7 +792,10 @@ class MoneyStorage {
   Future<void> reconcileTaggedDays(List<TotalMoneyDay> days) async {
     if (days.isEmpty) return;
     final sorted = [...days]..sort((a, b) => a.date.compareTo(b.date));
-    final ids = [for (final day in sorted) if (day.id != null) day.id!];
+    final ids = [
+      for (final day in sorted)
+        if (day.id != null) day.id!,
+    ];
     if (ids.isEmpty) return;
 
     final db = await database;
@@ -596,7 +814,10 @@ class MoneyStorage {
     }
 
     final incomeOthers = await ensureTag(name: 'Others', type: TagType.income);
-    final expenseOthers = await ensureTag(name: 'Others', type: TagType.expense);
+    final expenseOthers = await ensureTag(
+      name: 'Others',
+      type: TagType.expense,
+    );
     if (incomeOthers.id == null || expenseOthers.id == null) return;
 
     for (var i = 1; i < sorted.length; i++) {
@@ -645,38 +866,13 @@ class MoneyStorage {
       }
     }
 
-    if (delta.abs() <= eps && !(manualIncome > eps && manualExpense > eps)) {
-      await replaceDeltaEntriesForDay(dayId: dayId, tagIdToAmount: {});
-      return;
-    }
-
-    if (manualExpense <= eps && manualIncome > delta + 0.01) {
-      if (delta <= eps) {
-        await replaceDeltaEntriesForDay(dayId: dayId, tagIdToAmount: {});
-        return;
-      }
-      final scale = delta / manualIncome;
-      for (final id in manual.keys.toList()) {
-        if (manualType[id] == TagType.income.dbValue) {
-          manual[id] = manual[id]! * scale;
-        }
-      }
-      manualIncome = delta;
-    }
-
-    if (manualIncome <= eps && delta < 0 && manualExpense > (-delta) + 0.01) {
-      final target = -delta;
-      final scale = target / manualExpense;
-      for (final id in manual.keys.toList()) {
-        if (manualType[id] != TagType.income.dbValue) {
-          manual[id] = manual[id]! * scale;
-        }
-      }
-      manualExpense = target;
-    }
-
-    final autoIncome = math.max(0.0, delta + manualExpense - manualIncome);
-    final autoExpense = math.max(0.0, manualIncome - manualExpense - delta);
+    final autoBalance = calculateDayDeltaAutoBalance(
+      delta: delta,
+      manualIncome: manualIncome,
+      manualExpenses: manualExpense,
+    );
+    final autoIncome = autoBalance.income;
+    final autoExpense = autoBalance.expenses;
     final snap = Map<int, double>.from(manual);
     final autoIds = <int>{};
     if (autoIncome > eps) {
@@ -713,18 +909,22 @@ class MoneyStorage {
 
   Future<Map<DateTime, double>> amountsForTag(int tagId) async {
     final db = await database;
-    final rows = await db.rawQuery('''
+    final rows = await db.rawQuery(
+      '''
       SELECT d.date AS date, e.amount AS amount
       FROM total_money_day_delta_entries e
       JOIN total_money_days d ON d.id = e.dayId
       WHERE e.tagId = ?
-    ''', [tagId]);
+    ''',
+      [tagId],
+    );
     final totals = <DateTime, double>{};
     for (final row in rows) {
       final parsed = DateTime.tryParse(row['date'] as String? ?? '');
       if (parsed == null) continue;
       final day = DateTime(parsed.year, parsed.month, parsed.day);
-      totals[day] = (totals[day] ?? 0) + ((row['amount'] as num?)?.toDouble() ?? 0);
+      totals[day] =
+          (totals[day] ?? 0) + ((row['amount'] as num?)?.toDouble() ?? 0);
     }
     return totals;
   }
@@ -732,7 +932,9 @@ class MoneyStorage {
   Future<int?> dayIdFor(DateTime date) async {
     final days = await getTotalMoneyDays();
     for (final day in days) {
-      if (day.date.year == date.year && day.date.month == date.month && day.date.day == date.day) {
+      if (day.date.year == date.year &&
+          day.date.month == date.month &&
+          day.date.day == date.day) {
         return day.id;
       }
     }
@@ -826,19 +1028,30 @@ class MoneyStorage {
       manual.remove(tagId);
     }
 
-    final autoIncome = dayDelta + manualExpense - manualIncome;
-    final autoExpense = manualIncome - manualExpense - dayDelta;
+    final autoBalance = calculateDayDeltaAutoBalance(
+      delta: dayDelta,
+      manualIncome: manualIncome,
+      manualExpenses: manualExpense,
+    );
+    final autoIncome = autoBalance.income;
+    final autoExpense = autoBalance.expenses;
     final snap = Map<int, double>.from(manual);
     final autoIds = <int>{};
     if (autoIncome > 0.0000001) {
-      final incomeOthers = await ensureTag(name: 'Others', type: TagType.income);
+      final incomeOthers = await ensureTag(
+        name: 'Others',
+        type: TagType.income,
+      );
       if (incomeOthers.id != null) {
         snap[incomeOthers.id!] = autoIncome;
         autoIds.add(incomeOthers.id!);
       }
     }
     if (autoExpense > 0.0000001) {
-      final expenseOthers = await ensureTag(name: 'Others', type: TagType.expense);
+      final expenseOthers = await ensureTag(
+        name: 'Others',
+        type: TagType.expense,
+      );
       if (expenseOthers.id != null) {
         snap[expenseOthers.id!] = autoExpense;
         autoIds.add(expenseOthers.id!);
@@ -895,15 +1108,12 @@ class MoneyStorage {
       for (final entry in tagIdToAmount.entries) {
         final amount = entry.value;
         if (amount.abs() < 0.0000001) continue;
-        await txn.insert(
-          'total_money_day_delta_entries',
-          {
-            'dayId': dayId,
-            'tagId': entry.key,
-            'amount': amount,
-            'autoBalanced': autoBalancedTagIds.contains(entry.key) ? 1 : 0,
-          },
-        );
+        await txn.insert('total_money_day_delta_entries', {
+          'dayId': dayId,
+          'tagId': entry.key,
+          'amount': amount,
+          'autoBalanced': autoBalancedTagIds.contains(entry.key) ? 1 : 0,
+        });
       }
     });
   }
@@ -939,7 +1149,9 @@ class MoneyStorage {
     bool replace = true,
   }) async {
     final schemaVersion = json['schemaVersion'];
-    if (schemaVersion is! int || schemaVersion < 1 || schemaVersion > backupSchemaVersion) {
+    if (schemaVersion is! int ||
+        schemaVersion < 1 ||
+        schemaVersion > backupSchemaVersion) {
       throw Exception('Unsupported backup schemaVersion: $schemaVersion');
     }
 
@@ -947,9 +1159,12 @@ class MoneyStorage {
     final sources = (json['money_sources'] as List?)?.cast<Map>() ?? const [];
     final days = (json['total_money_days'] as List?)?.cast<Map>() ?? const [];
     final tags = (json['tags'] as List?)?.cast<Map>() ?? const [];
-    final deltaEntries = (json['total_money_day_delta_entries'] as List?)?.cast<Map>() ?? const [];
+    final deltaEntries =
+        (json['total_money_day_delta_entries'] as List?)?.cast<Map>() ??
+        const [];
     final goals = (json['goals'] as List?)?.cast<Map>() ?? const [];
-    final sourceChanges = (json['money_source_changes'] as List?)?.cast<Map>() ?? const [];
+    final sourceChanges =
+        (json['money_source_changes'] as List?)?.cast<Map>() ?? const [];
 
     final db = await database;
 

@@ -32,7 +32,9 @@ class SmsSourceApplier {
         deltaAmount: delta,
         resultingAmount: updated.amount,
         createdAt: date,
-        type: debit ? MoneySourceChangeType.subtract : MoneySourceChangeType.add,
+        type: debit
+            ? MoneySourceChangeType.subtract
+            : MoneySourceChangeType.add,
         note: note,
       ),
     );
@@ -54,5 +56,25 @@ class SmsSourceApplier {
       date: date,
       note: note,
     );
+  }
+
+  Future<MoneySourceDeltaResult?> applySignedDeltaOnce({
+    required int sourceId,
+    required double delta,
+    required DateTime date,
+    required String operationKey,
+    String? note,
+  }) {
+    return _storage.applySourceDeltaOnce(
+      sourceId: sourceId,
+      delta: delta,
+      date: date,
+      operationKey: operationKey,
+      note: note,
+    );
+  }
+
+  Future<MoneySourceDeltaResult?> resultForOperation(String operationKey) {
+    return _storage.sourceDeltaForOperation(operationKey);
   }
 }

@@ -53,6 +53,7 @@ class MoneySourceChange {
   final DateTime createdAt;
   final MoneySourceChangeType type;
   final String? note;
+  final String? operationKey;
 
   const MoneySourceChange({
     this.id,
@@ -62,6 +63,7 @@ class MoneySourceChange {
     required this.createdAt,
     required this.type,
     this.note,
+    this.operationKey,
   });
 
   Map<String, dynamic> toMap() {
@@ -73,6 +75,7 @@ class MoneySourceChange {
       'createdAt': createdAt.toIso8601String(),
       'type': type.dbValue,
       'note': note,
+      'operationKey': operationKey,
     };
   }
 
@@ -85,7 +88,7 @@ class MoneySourceChange {
       createdAt: DateTime.parse(map['createdAt'] as String),
       type: MoneySourceChangeTypeDb.fromDb(map['type'] as String),
       note: map['note'] as String?,
+      operationKey: map['operationKey'] as String?,
     );
   }
 }
-

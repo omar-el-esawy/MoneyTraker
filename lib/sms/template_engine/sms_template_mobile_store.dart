@@ -60,7 +60,13 @@ class SmsTemplateBank {
   }
 }
 
-enum SmsTemplateMessageStatus { pending, parsed, unrecognized, duplicate, sample }
+enum SmsTemplateMessageStatus {
+  pending,
+  parsed,
+  unrecognized,
+  duplicate,
+  sample,
+}
 
 class SmsTemplateStoredMessage {
   final String hash;
@@ -229,15 +235,22 @@ class SmsTemplateMobileStore {
     await prefs.setBool(enabledKey, enabled);
   }
 
-  Future<DateTime?> lastSyncAt() async {
+  String _lastSyncKeyForBank(String bankId) => '$lastSyncKey.bank.$bankId';
+
+  Future<DateTime?> lastSyncAt({String? bankId}) async {
     final prefs = await SharedPreferences.getInstance();
-    final value = prefs.getInt(lastSyncKey);
+    final value = prefs.getInt(
+      bankId == null ? lastSyncKey : _lastSyncKeyForBank(bankId),
+    );
     return value == null ? null : DateTime.fromMillisecondsSinceEpoch(value);
   }
 
-  Future<void> setLastSyncAt(DateTime date) async {
+  Future<void> setLastSyncAt(DateTime date, {String? bankId}) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(lastSyncKey, date.millisecondsSinceEpoch);
+    await prefs.setInt(
+      bankId == null ? lastSyncKey : _lastSyncKeyForBank(bankId),
+      date.millisecondsSinceEpoch,
+    );
   }
 
   Future<DateTime?> activatedAt() async {

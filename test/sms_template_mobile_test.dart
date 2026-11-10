@@ -14,6 +14,7 @@ import 'package:money_traker/pages/sms_templates/sms_template_operations_page.da
 import 'package:money_traker/pages/sms_templates/sms_template_wizard_page.dart';
 import 'package:money_traker/pages/sms_templates/sms_templates_page.dart';
 import 'package:money_traker/services/sms_feature_store.dart';
+import 'package:money_traker/services/sms_source_applier.dart';
 import 'package:money_traker/services/sms_template_sync_service.dart';
 import 'package:money_traker/sms/sms_hash.dart';
 import 'package:money_traker/sms/sms_models.dart';
@@ -478,6 +479,225 @@ void main() {
     );
   });
 
+  test('global and bank sync cursors stay independent', () async {
+    SharedPreferences.setMockInitialValues({});
+    final store = SmsTemplateMobileStore.instance;
+    final global = DateTime(2026, 11, 10, 10);
+    final bankA = DateTime(2026, 11, 10, 10, 5);
+    final bankB = DateTime(2026, 11, 10, 9, 55);
+
+    await store.setLastSyncAt(global);
+    await store.setLastSyncAt(bankA, bankId: 'bank-a');
+    await store.setLastSyncAt(bankB, bankId: 'bank-b');
+
+    expect(await store.lastSyncAt(), global);
+    expect(await store.lastSyncAt(bankId: 'bank-a'), bankA);
+    expect(await store.lastSyncAt(bankId: 'bank-b'), bankB);
+    expect(await store.lastSyncAt(bankId: 'bank-c'), isNull);
+    expect(smsTemplateLatestSync(global, bankA), bankA);
+    expect(smsTemplateLatestSync(global, bankB), global);
+  });
+
+  test('an SMS money operation applies only once', () async {
+    final money = MoneyStorage();
+    final db = await money.database;
+    await db.delete('money_source_changes');
+    await db.delete('money_sources');
+    await db.delete('total_money_days');
+    final columns = await db.rawQuery(
+      "PRAGMA table_info('money_source_changes')",
+    );
+    expect(columns.map((column) => column['name']), contains('operationKey'));
+
+    final sourceId = await money.addMoneySource(
+      MoneySource(name: 'Idempotent card', amount: 1000),
+    );
+    final first = await SmsSourceApplier.instance.applySignedDeltaOnce(
+      sourceId: sourceId,
+      delta: -100,
+      date: DateTime(2026, 11, 10),
+      operationKey: 'sms-template-v2:idempotent',
+    );
+    final second = await SmsSourceApplier.instance.applySignedDeltaOnce(
+      sourceId: sourceId,
+      delta: -100,
+      date: DateTime(2026, 11, 10),
+      operationKey: 'sms-template-v2:idempotent',
+    );
+
+    expect(first?.newlyApplied, isTrue);
+    expect(second?.newlyApplied, isFalse);
+    expect(second?.beforeAmount, 1000);
+    expect(second?.afterAmount, 900);
+    expect((await money.getMoneySources()).single.amount, 900);
+    final changes = await money.getMoneySourceChanges(sourceId);
+    expect(changes, hasLength(1));
+    expect(changes.single.operationKey, 'sms-template-v2:idempotent');
+  });
+
+  test(
+    'reprocessing repairs records after money was already applied',
+    () async {
+      SharedPreferences.setMockInitialValues({
+        SmsTemplateMobileStore.enabledKey: true,
+      });
+      final money = MoneyStorage();
+      final moneyDb = await money.database;
+      await moneyDb.delete('money_source_changes');
+      await moneyDb.delete('money_sources');
+      await moneyDb.delete('total_money_days');
+      final sourceId = await money.addMoneySource(
+        MoneySource(name: 'Recovery card', amount: 1000),
+      );
+      final smsDb = await DatabaseHelper.instance.database;
+      for (final table in [
+        'sms_template_applications_v2',
+        'sms_template_messages_v2',
+        'sms_templates_v2',
+        'sms_template_banks_v2',
+        'transactions',
+      ]) {
+        await smsDb.delete(table);
+      }
+
+      const body = 'Debited 100 EGP successfully';
+      const bankId = 'recovery-bank';
+      const templateId = 'recovery-template';
+      const smsId = 'recovery-sms';
+      final hash = SmsHash.of(smsId: smsId, sender: 'BANK', body: body);
+      await SmsTemplateMobileStore.instance.saveBank(
+        SmsTemplateBank(
+          id: bankId,
+          name: 'Recovery Bank',
+          senders: const ['BANK'],
+          sourceId: sourceId,
+          createdAt: DateTime(2026, 11, 10),
+        ),
+      );
+      await SmsTemplateMobileStore.instance.saveTemplate(
+        const SmsTemplate(
+          id: templateId,
+          bankId: bankId,
+          sampleText: body,
+          type: SmsTemplateType.debit,
+          amount: SmsPlaceholder(
+            kind: SmsPlaceholderKind.amount,
+            range: SmsTextRange(start: 8, end: 11),
+          ),
+          directionRanges: [SmsTextRange(start: 0, end: 7)],
+        ),
+      );
+      await SmsTemplateMobileStore.instance.upsertMessage(
+        SmsTemplateStoredMessage(
+          hash: hash,
+          smsId: smsId,
+          sender: 'BANK',
+          body: body,
+          date: DateTime(2026, 11, 10, 12),
+          bankId: bankId,
+          status: SmsTemplateMessageStatus.unrecognized,
+          copiedAt: DateTime(2026, 11, 10, 12),
+        ),
+      );
+      await SmsSourceApplier.instance.applySignedDeltaOnce(
+        sourceId: sourceId,
+        delta: -100,
+        date: DateTime(2026, 11, 10, 12),
+        operationKey: 'sms-template-v2:$hash',
+      );
+
+      final result = await SmsTemplateSyncService.instance.reprocessBank(
+        bankId,
+      );
+
+      expect(result.applied, 1);
+      expect((await money.getMoneySources()).single.amount, 900);
+      expect(
+        await SmsTemplateMobileStore.instance.hasApplication(hash),
+        isTrue,
+      );
+      expect(await smsDb.query('transactions'), hasLength(1));
+    },
+  );
+
+  test('concurrent reprocessing changes the source once', () async {
+    SharedPreferences.setMockInitialValues({
+      SmsTemplateMobileStore.enabledKey: true,
+    });
+    final money = MoneyStorage();
+    final moneyDb = await money.database;
+    await moneyDb.delete('money_source_changes');
+    await moneyDb.delete('money_sources');
+    await moneyDb.delete('total_money_days');
+    final sourceId = await money.addMoneySource(
+      MoneySource(name: 'Concurrent card', amount: 1000),
+    );
+    final smsDb = await DatabaseHelper.instance.database;
+    for (final table in [
+      'sms_template_applications_v2',
+      'sms_template_messages_v2',
+      'sms_templates_v2',
+      'sms_template_banks_v2',
+      'transactions',
+    ]) {
+      await smsDb.delete(table);
+    }
+
+    const body = 'Debited 100 EGP successfully';
+    const bankId = 'concurrent-bank';
+    final hash = SmsHash.of(
+      smsId: 'concurrent-sms',
+      sender: 'BANK',
+      body: body,
+    );
+    await SmsTemplateMobileStore.instance.saveBank(
+      SmsTemplateBank(
+        id: bankId,
+        name: 'Concurrent Bank',
+        senders: const ['BANK'],
+        sourceId: sourceId,
+        createdAt: DateTime(2026, 11, 10),
+      ),
+    );
+    await SmsTemplateMobileStore.instance.saveTemplate(
+      const SmsTemplate(
+        id: 'concurrent-template',
+        bankId: bankId,
+        sampleText: body,
+        type: SmsTemplateType.debit,
+        amount: SmsPlaceholder(
+          kind: SmsPlaceholderKind.amount,
+          range: SmsTextRange(start: 8, end: 11),
+        ),
+        directionRanges: [SmsTextRange(start: 0, end: 7)],
+      ),
+    );
+    await SmsTemplateMobileStore.instance.upsertMessage(
+      SmsTemplateStoredMessage(
+        hash: hash,
+        smsId: 'concurrent-sms',
+        sender: 'BANK',
+        body: body,
+        date: DateTime(2026, 11, 10, 12),
+        bankId: bankId,
+        status: SmsTemplateMessageStatus.unrecognized,
+        copiedAt: DateTime(2026, 11, 10, 12),
+      ),
+    );
+
+    final results = await Future.wait([
+      SmsTemplateSyncService.instance.reprocessBank(bankId),
+      SmsTemplateSyncService.instance.reprocessBank(bankId),
+    ]);
+
+    expect(results.fold<int>(0, (sum, item) => sum + item.applied), 1);
+    expect((await money.getMoneySources()).single.amount, 900);
+    expect(
+      await SmsTemplateMobileStore.instance.getApplications(),
+      hasLength(1),
+    );
+  });
+
   test(
     'enabling SMS Templates records the start of that day and keeps it',
     () async {
@@ -722,77 +942,80 @@ void main() {
     );
   });
 
-  test('teaching from a message after SMS Templates opened applies it', () async {
-    final opened = DateTime(2026, 11, 8);
-    SharedPreferences.setMockInitialValues({
-      SmsTemplateMobileStore.enabledKey: true,
-      SmsTemplateMobileStore.activatedAtKey: opened.millisecondsSinceEpoch,
-    });
-    final money = MoneyStorage();
-    final moneyDb = await money.database;
-    await moneyDb.delete('money_source_changes');
-    await moneyDb.delete('money_sources');
-    final sourceId = await money.addMoneySource(
-      MoneySource(name: 'Opened card', amount: 1000),
-    );
-    final smsDb = await DatabaseHelper.instance.database;
-    for (final table in [
-      'sms_template_applications_v2',
-      'sms_template_messages_v2',
-      'sms_templates_v2',
-      'sms_template_banks_v2',
-      'transactions',
-    ]) {
-      await smsDb.delete(table);
-    }
-    const body = 'Debited 100 EGP successfully';
-    const template = SmsTemplate(
-      id: 'opened-template',
-      bankId: 'opened-bank',
-      sampleText: body,
-      type: SmsTemplateType.debit,
-      amount: SmsPlaceholder(
-        kind: SmsPlaceholderKind.amount,
-        range: SmsTextRange(start: 8, end: 11),
-      ),
-      directionRanges: [SmsTextRange(start: 0, end: 7)],
-    );
-    final message = SmsTemplateStoredMessage(
-      hash: SmsHash.of(smsId: 'today-sms', sender: 'BANK', body: body),
-      smsId: 'today-sms',
-      sender: 'BANK',
-      body: body,
-      date: DateTime(2026, 11, 10, 12),
-      bankId: 'opened-bank',
-      status: SmsTemplateMessageStatus.pending,
-      copiedAt: DateTime(2026, 11, 10),
-    );
-    await SmsTemplateMobileStore.instance.saveBank(
-      SmsTemplateBank(
-        id: 'opened-bank',
-        name: 'Opened Bank',
-        senders: const ['BANK'],
-        sourceId: sourceId,
-        createdAt: opened,
-      ),
-    );
+  test(
+    'teaching from a message after SMS Templates opened applies it',
+    () async {
+      final opened = DateTime(2026, 11, 8);
+      SharedPreferences.setMockInitialValues({
+        SmsTemplateMobileStore.enabledKey: true,
+        SmsTemplateMobileStore.activatedAtKey: opened.millisecondsSinceEpoch,
+      });
+      final money = MoneyStorage();
+      final moneyDb = await money.database;
+      await moneyDb.delete('money_source_changes');
+      await moneyDb.delete('money_sources');
+      final sourceId = await money.addMoneySource(
+        MoneySource(name: 'Opened card', amount: 1000),
+      );
+      final smsDb = await DatabaseHelper.instance.database;
+      for (final table in [
+        'sms_template_applications_v2',
+        'sms_template_messages_v2',
+        'sms_templates_v2',
+        'sms_template_banks_v2',
+        'transactions',
+      ]) {
+        await smsDb.delete(table);
+      }
+      const body = 'Debited 100 EGP successfully';
+      const template = SmsTemplate(
+        id: 'opened-template',
+        bankId: 'opened-bank',
+        sampleText: body,
+        type: SmsTemplateType.debit,
+        amount: SmsPlaceholder(
+          kind: SmsPlaceholderKind.amount,
+          range: SmsTextRange(start: 8, end: 11),
+        ),
+        directionRanges: [SmsTextRange(start: 0, end: 7)],
+      );
+      final message = SmsTemplateStoredMessage(
+        hash: SmsHash.of(smsId: 'today-sms', sender: 'BANK', body: body),
+        smsId: 'today-sms',
+        sender: 'BANK',
+        body: body,
+        date: DateTime(2026, 11, 10, 12),
+        bankId: 'opened-bank',
+        status: SmsTemplateMessageStatus.pending,
+        copiedAt: DateTime(2026, 11, 10),
+      );
+      await SmsTemplateMobileStore.instance.saveBank(
+        SmsTemplateBank(
+          id: 'opened-bank',
+          name: 'Opened Bank',
+          senders: const ['BANK'],
+          sourceId: sourceId,
+          createdAt: opened,
+        ),
+      );
 
-    await SmsTemplateSyncService.instance.saveTaughtTemplate(
-      template: template,
-      message: message,
-    );
-    final result = await SmsTemplateSyncService.instance.reprocessBank(
-      'opened-bank',
-    );
-    final source = (await money.getMoneySources()).single;
+      await SmsTemplateSyncService.instance.saveTaughtTemplate(
+        template: template,
+        message: message,
+      );
+      final result = await SmsTemplateSyncService.instance.reprocessBank(
+        'opened-bank',
+      );
+      final source = (await money.getMoneySources()).single;
 
-    expect(result.applied, 1);
-    expect(source.amount, 900);
-    expect(
-      await SmsTemplateMobileStore.instance.hasApplication(message.hash),
-      isTrue,
-    );
-  });
+      expect(result.applied, 1);
+      expect(source.amount, 900);
+      expect(
+        await SmsTemplateMobileStore.instance.hasApplication(message.hash),
+        isTrue,
+      );
+    },
+  );
 }
 
 Future<void> _waitForText(WidgetTester tester, String text) async {
