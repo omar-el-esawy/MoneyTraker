@@ -78,11 +78,16 @@ class SmsTemplateDetailPage extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 14),
-                  const Wrap(
+                  Wrap(
                     spacing: 8,
                     runSpacing: 8,
                     children: [
-                      _Legend(label: 'Amount', color: Color(0xFFDBEAFE)),
+                      _Legend(
+                        label: template.amount.kind == SmsPlaceholderKind.balance
+                            ? 'Balance'
+                            : 'Amount',
+                        color: Color(0xFFDBEAFE),
+                      ),
                       _Legend(label: 'Direction', color: Color(0xFFDCFCE7)),
                       _Legend(label: 'Changing', color: Color(0xFFFFEDD5)),
                       _Legend(
@@ -186,6 +191,8 @@ class _MessageResultCard extends StatelessWidget {
         : AppConstants.textTertiary;
     final signedAmount = result == null
         ? null
+        : result!.usesBalance
+        ? 'balance ${result!.balance?.toStringAsFixed(2) ?? result!.amount.toStringAsFixed(2)}'
         : '${debit ? '−' : '+'}${result!.amount.toStringAsFixed(2)}';
 
     return Padding(

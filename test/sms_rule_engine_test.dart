@@ -460,44 +460,52 @@ void main() {
   );
 
   test(
-    'type and category patterns require selected words at exact token positions',
+    'category patterns start anywhere, keep neighbors together, and allow a changing gap',
     () {
+      const sample =
+          '10 LE was rechareged successfully to you mobile balance';
       final pattern = SmsRulePattern(
-        tokenCount: 6,
+        tokenCount: 9,
         words: const [
-          SmsPatternWord(index: 0, word: 'تم'),
-          SmsPatternWord(index: 2, word: 'خصم'),
+          SmsPatternWord(index: 3, word: 'rechareged'),
+          SmsPatternWord(index: 5, word: 'to'),
+          SmsPatternWord(index: 6, word: 'you'),
+          SmsPatternWord(index: 7, word: 'mobile'),
+          SmsPatternWord(index: 8, word: 'balance'),
         ],
       );
-      final typeWord = SmsTypeWord(
-        bankId: 'cib',
-        word: pattern.display,
-        typeHint: 'debit',
-        pattern: pattern,
-        createdAt: DateTime(2026),
-      );
-      expect(
-        SmsRuleEngine.detectType('تم تحويل خصم 150 جنيه اليوم', [typeWord]),
-        'debit',
-      );
-      expect(SmsRuleEngine.detectType('تم خصم 150 جنيه اليوم', [typeWord]), '');
-      expect(SmsRuleEngine.detectType('تم تحويل خصم 150 جنيه', [typeWord]), '');
-
+      expect(pattern.display, 'rechareged ... to you mobile balance');
       final category = SmsCategoryRule(
-        bankId: 'cib',
+        bankId: 'vodafone',
         word: pattern.display,
-        tagId: 7,
+        tagId: 4,
         pattern: pattern,
         createdAt: DateTime(2026),
       );
+
       expect(
-        SmsRuleEngine.rankCategoryRules('تم تحويل خصم 150 جنيه اليوم', [
-          category,
-        ]),
+        SmsRuleEngine.rankCategoryRules(sample, [category]),
         [category],
       );
       expect(
-        SmsRuleEngine.rankCategoryRules('تم تحويل خصم 150 جنيه', [category]),
+        SmsRuleEngine.rankCategoryRules(
+          '50 EGP was rechareged extra extra to you mobile balance today',
+          [category],
+        ),
+        [category],
+      );
+      expect(
+        SmsRuleEngine.rankCategoryRules(
+          'rechareged to you mobile balance',
+          [category],
+        ),
+        [category],
+      );
+      expect(
+        SmsRuleEngine.rankCategoryRules(
+          'rechareged successfully to you extra mobile balance',
+          [category],
+        ),
         isEmpty,
       );
     },

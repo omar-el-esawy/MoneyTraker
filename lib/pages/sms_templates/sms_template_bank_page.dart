@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import 'package:money_traker/constants/app_constants.dart';
+import 'package:money_traker/data/database_helper.dart';
 import 'package:money_traker/model/money_source.dart';
+import 'package:money_traker/model/tag.dart';
 import 'package:money_traker/pages/sms_templates/sms_template_detail_page.dart';
 import 'package:money_traker/pages/sms_templates/sms_template_wizard_page.dart';
 import 'package:money_traker/services/sms_template_sync_service.dart';
+import 'package:money_traker/sms/sms_models.dart';
 import 'package:money_traker/sms/template_engine/sms_template_mobile_store.dart';
 import 'package:money_traker/sms/template_engine/template_models.dart';
 import 'package:money_traker/store/money_storage.dart';
@@ -256,6 +259,15 @@ class _SmsTemplateBankPageState extends State<SmsTemplateBankPage> {
     Navigator.pop(context, true);
   }
 
+  Future<void> _openCategoryDictionary() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => _CategoryDictionarySheet(bankId: widget.bankId),
+    );
+  }
+
   Future<void> _openTemplate(SmsTemplate template) {
     return Navigator.push(
       context,
@@ -295,6 +307,11 @@ class _SmsTemplateBankPageState extends State<SmsTemplateBankPage> {
               )
             : null,
         actions: [
+          IconButton(
+            tooltip: 'Category dictionary',
+            onPressed: _busy ? null : _openCategoryDictionary,
+            icon: const Icon(Icons.menu_book_outlined),
+          ),
           IconButton(
             tooltip: 'Delete bank',
             onPressed: _busy ? null : _deleteBank,
@@ -674,6 +691,135 @@ class _MessageRow extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _CategoryDictionarySheet extends StatefulWidget {
+  final String bankId;
+
+  const _CategoryDictionarySheet({required this.bankId});
+
+  @override
+  State<_CategoryDictionarySheet> createState() =>
+      _CategoryDictionarySheetState();
+}
+
+class _CategoryDictionarySheetState extends State<_CategoryDictionarySheet> {
+  List<SmsCategoryRule> _rules = const [];
+  Map<int, Tag> _tags = const {};
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final rules = await DatabaseHelper.instance.getSmsCategoryRules(
+      bankId: widget.bankId,
+    );
+    final tags = await MoneyStorage().getTags();
+    if (!mounted) return;
+    setState(() {
+      _rules = rules;
+      _tags = {
+        for (final tag in tags)
+          if (tag.id != null) tag.id!: tag,
+      };
+      _loading = false;
+    });
+  }
+
+  Future<void> _delete(SmsCategoryRule rule) async {
+    final id = rule.id;
+    if (id == null) return;
+    final word = rule.pattern?.display ?? rule.word;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove mapping?'),
+        content: Text(
+          'Messages with "$word" will no longer be filed under ${_categoryName(rule)}.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await DatabaseHelper.instance.deleteSmsCategoryRule(id);
+    await _load();
+  }
+
+  String _categoryName(SmsCategoryRule rule) {
+    final tag = _tags[rule.tagId];
+    if (tag == null) return 'Deleted category';
+    final kind = tag.type == TagType.expense ? 'Expense' : 'Income';
+    return '$kind · ${tag.name}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FractionallySizedBox(
+      heightFactor: .78,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: Text(
+              'Category dictionary',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(20, 0, 20, 12),
+            child: Text(
+              'Words taught for this bank and the category each one maps to.',
+            ),
+          ),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _rules.isEmpty
+                ? const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(28),
+                      child: Text(
+                        'No category mappings yet. Teach them from a template.',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(8, 0, 8, 24),
+                    itemCount: _rules.length,
+                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final rule = _rules[index];
+                      return ListTile(
+                        title: Text(rule.pattern?.display ?? rule.word),
+                        subtitle: Text(_categoryName(rule)),
+                        trailing: IconButton(
+                          tooltip: 'Remove',
+                          onPressed: () => _delete(rule),
+                          icon: const Icon(Icons.close),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
       ),
     );
   }

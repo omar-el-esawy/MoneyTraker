@@ -315,7 +315,19 @@ class SmsRulePattern {
         'words': [for (final word in words) word.toJson()],
       });
 
-  String get display => words.map((word) => word.word).join(' … ');
+  String get display {
+    final ordered = [...words]..sort((a, b) => a.index.compareTo(b.index));
+    if (ordered.isEmpty) return '';
+    final buffer = StringBuffer(ordered.first.word);
+    for (var i = 1; i < ordered.length; i++) {
+      if (ordered[i].index == ordered[i - 1].index + 1) {
+        buffer.write(' ${ordered[i].word}');
+      } else {
+        buffer.write(' ... ${ordered[i].word}');
+      }
+    }
+    return buffer.toString();
+  }
 
   Map<String, dynamic> toJson() => {
         'tokenCount': tokenCount,

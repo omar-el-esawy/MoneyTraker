@@ -267,6 +267,27 @@ void main() {
       expect(compiled!.match(sample), isNotNull);
     });
 
+    test('a balance template reports the account balance', () {
+      const sample = 'Your available balance is 900.00 EGP';
+      final compiled = SmsTemplateCompiler.compile(
+        SmsTemplate(
+          id: 'balance-only',
+          bankId: 'bank',
+          sampleText: sample,
+          type: SmsTemplateType.debit,
+          amount: _placeholder(sample, SmsPlaceholderKind.balance, '900.00'),
+          directionRanges: [_rangeOf(sample, 'balance')],
+        ),
+      );
+
+      final result = compiled!.match('Your available balance is 750.50 EGP');
+
+      expect(result, isNotNull);
+      expect(result!.usesBalance, isTrue);
+      expect(result.balance, 750.50);
+      expect(result.amount, 750.50);
+    });
+
     test('rejects invalid templates before matching', () {
       const sample = 'تم خصم 150 جنيه';
       final amount = _placeholder(sample, SmsPlaceholderKind.amount, '150');

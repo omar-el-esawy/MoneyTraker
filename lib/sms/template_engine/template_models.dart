@@ -114,11 +114,16 @@ class SmsParsedResult {
   final String? merchant;
   final double? balance;
 
+  /// When true, [balance] is the account balance and [amount] repeats it.
+  /// The money change is the difference from the current source balance.
+  final bool usesBalance;
+
   const SmsParsedResult({
     required this.templateId,
     required this.amount,
     required this.type,
     this.merchant,
     this.balance,
+    this.usesBalance = false,
   });
 }

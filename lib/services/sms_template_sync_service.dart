@@ -7,7 +7,9 @@ import 'package:telephony/telephony.dart';
 import 'package:money_traker/data/database_helper.dart';
 import 'package:money_traker/domain/entities/transaction_entity.dart';
 import 'package:money_traker/services/sms_feature_store.dart';
+import 'package:money_traker/services/sms_category_applier.dart';
 import 'package:money_traker/services/sms_source_applier.dart';
+import 'package:money_traker/services/transaction_category_assigner.dart';
 import 'package:money_traker/sms/sms_hash.dart';
 import 'package:money_traker/sms/template_engine/sms_template_engine.dart';
 import 'package:money_traker/sms/template_engine/sms_template_mobile_store.dart';
@@ -71,6 +73,21 @@ bool smsTaughtMessageShouldApply({
   final start = DateTime(activatedAt.year, activatedAt.month, activatedAt.day);
   final day = DateTime(messageDate.year, messageDate.month, messageDate.day);
   return !day.isBefore(start);
+}
+
+/// Amount templates add or subtract [SmsParsedResult.amount].
+/// Balance templates move the source to [SmsParsedResult.balance].
+({double delta, bool debit, double recordedAmount}) smsTemplateMoneyChange({
+  required SmsParsedResult result,
+  required double sourceAmount,
+}) {
+  if (result.usesBalance && result.balance != null) {
+    final delta = result.balance! - sourceAmount;
+    return (delta: delta, debit: delta < 0, recordedAmount: delta.abs());
+  }
+  final debit = result.type == SmsTemplateType.debit;
+  final delta = debit ? -result.amount : result.amount;
+  return (delta: delta, debit: debit, recordedAmount: result.amount);
 }
 
 class SmsTemplateSyncResult {
@@ -482,8 +499,12 @@ class SmsTemplateSyncService {
         .where((candidate) => candidate.id == bank.sourceId)
         .firstOrNull;
     if (source == null || source.id == null) return false;
-    final debit = result.type == SmsTemplateType.debit;
-    final delta = debit ? -result.amount : result.amount;
+    final change = smsTemplateMoneyChange(
+      result: result,
+      sourceAmount: source.amount,
+    );
+    final debit = change.debit;
+    final delta = change.delta;
     final applied = await SmsSourceApplier.instance.applySignedDelta(
       sourceId: source.id!,
       delta: delta,
@@ -492,10 +513,10 @@ class SmsTemplateSyncService {
     );
     if (!applied) return false;
 
-    await _db.upsertTransaction(
+    final saved = await _db.upsertTransaction(
       TransactionEntity(
         bank: bank.name,
-        amount: result.amount,
+        amount: change.recordedAmount,
         type: debit ? TransactionType.debit : TransactionType.credit,
         date: item.date,
         rawSms: item.body,
@@ -507,6 +528,12 @@ class SmsTemplateSyncService {
         ruleVersion: 1,
       ),
     );
+    await _assignWordCategory(
+      bankId: bank.id,
+      transaction: saved,
+      body: item.body,
+      debit: debit,
+    );
     final applicationId = await _store.insertApplication(
       SmsTemplateApplication(
         smsHash: hash,
@@ -516,7 +543,7 @@ class SmsTemplateSyncService {
         templateId: result.templateId,
         sourceId: source.id!,
         sourceName: source.name,
-        amount: result.amount,
+        amount: change.recordedAmount,
         delta: delta,
         beforeAmount: source.amount,
         afterAmount: source.amount + delta,
@@ -526,6 +553,36 @@ class SmsTemplateSyncService {
       ),
     );
     return applicationId > 0;
+  }
+
+  Future<void> _assignWordCategory({
+    required String bankId,
+    required TransactionEntity transaction,
+    required String body,
+    required bool debit,
+  }) async {
+    if (transaction.id == null || transaction.amount <= 0) return;
+    try {
+      final rules = await _db.getSmsCategoryRules(bankId: bankId);
+      if (rules.isEmpty) return;
+      final tags = await _moneyStorage.getTags();
+      final choice = SmsCategoryApplier.instance.match(
+        body: body,
+        debit: debit,
+        rules: rules,
+        tags: tags,
+      );
+      if (choice == null) return;
+      await TransactionCategoryAssigner.instance.assign(
+        transaction: transaction,
+        name: choice.tag.name,
+        type: choice.tag.type,
+      );
+    } catch (error, stackTrace) {
+      debugPrint(
+        'SMS template category assignment failed: $error\n$stackTrace',
+      );
+    }
   }
 
   Future<bool> undo(SmsTemplateApplication application) async {

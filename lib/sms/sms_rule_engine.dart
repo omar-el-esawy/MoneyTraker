@@ -116,21 +116,54 @@ class SmsRuleEngine {
     String legacyWord,
   ) {
     if (pattern == null) return locateText(body, legacyWord);
+    if (!pattern.isValid) return null;
     final tokens = tokenize(body);
-    if (!pattern.isValid || tokens.length != pattern.tokenCount) return null;
-    for (final selected in pattern.words) {
-      if (selected.index >= tokens.length) return null;
-      final actual = normalizeWord(tokens[selected.index].text);
-      if (actual.toLowerCase() != selected.word.trim().toLowerCase())
-        return null;
+    final selected = [...pattern.words]
+      ..sort((a, b) => a.index.compareTo(b.index));
+    if (selected.isEmpty || tokens.isEmpty) return null;
+    final first = selected.first.word;
+    for (var i = 0; i < tokens.length; i++) {
+      if (!_sameToken(tokens[i].text, first)) continue;
+      final end = _matchSelectedFrom(tokens, selected, i);
+      if (end != null) {
+        return (start: tokens[i].start, end: tokens[end].end);
+      }
     }
-    final first = pattern.words
-        .map((word) => word.index)
-        .reduce((a, b) => a < b ? a : b);
-    final last = pattern.words
-        .map((word) => word.index)
-        .reduce((a, b) => a > b ? a : b);
-    return (start: tokens[first].start, end: tokens[last].end);
+    return null;
+  }
+
+  static int? _matchSelectedFrom(
+    List<SmsToken> tokens,
+    List<SmsPatternWord> selected,
+    int start,
+  ) {
+    var cursor = start;
+    for (var i = 1; i < selected.length; i++) {
+      final wanted = selected[i].word;
+      final adjacent = selected[i].index == selected[i - 1].index + 1;
+      if (adjacent) {
+        cursor += 1;
+        if (cursor >= tokens.length || !_sameToken(tokens[cursor].text, wanted)) {
+          return null;
+        }
+        continue;
+      }
+      var found = -1;
+      for (var j = cursor + 1; j < tokens.length; j++) {
+        if (_sameToken(tokens[j].text, wanted)) {
+          found = j;
+          break;
+        }
+      }
+      if (found < 0) return null;
+      cursor = found;
+    }
+    return cursor;
+  }
+
+  static bool _sameToken(String actual, String expected) {
+    return normalizeWord(actual).toLowerCase() ==
+        expected.trim().toLowerCase();
   }
 
   static SmsRuleContext contextFor(

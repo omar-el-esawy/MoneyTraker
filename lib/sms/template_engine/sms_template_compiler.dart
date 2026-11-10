@@ -52,6 +52,17 @@ class CompiledSmsTemplate {
           break;
       }
     }
+    if (template.amount.kind == SmsPlaceholderKind.balance) {
+      if (balance == null) return null;
+      return SmsParsedResult(
+        templateId: template.id,
+        amount: balance,
+        type: template.type,
+        merchant: merchant,
+        balance: balance,
+        usesBalance: true,
+      );
+    }
     if (amount == null) return null;
 
     return SmsParsedResult(
@@ -71,7 +82,8 @@ class SmsTemplateCompiler {
     if (template.id.trim().isEmpty ||
         template.bankId.trim().isEmpty ||
         template.sampleText.trim().isEmpty ||
-        template.amount.kind != SmsPlaceholderKind.amount ||
+        (template.amount.kind != SmsPlaceholderKind.amount &&
+            template.amount.kind != SmsPlaceholderKind.balance) ||
         template.directionRanges.isEmpty) {
       return null;
     }
@@ -83,18 +95,22 @@ class SmsTemplateCompiler {
         template.placeholders,
       ),
     ];
+    final amountCount = allPlaceholders
+        .where((item) => item.kind == SmsPlaceholderKind.amount)
+        .length;
+    final balanceCount = allPlaceholders
+        .where((item) => item.kind == SmsPlaceholderKind.balance)
+        .length;
+    final moneyIsBalance = template.amount.kind == SmsPlaceholderKind.balance;
+    if (moneyIsBalance) {
+      if (balanceCount != 1 || amountCount != 0) return null;
+    } else if (amountCount != 1 || balanceCount > 1) {
+      return null;
+    }
     if (allPlaceholders
-                .where((item) => item.kind == SmsPlaceholderKind.amount)
-                .length !=
-            1 ||
-        allPlaceholders
-                .where((item) => item.kind == SmsPlaceholderKind.merchant)
-                .length >
-            1 ||
-        allPlaceholders
-                .where((item) => item.kind == SmsPlaceholderKind.balance)
-                .length >
-            1) {
+            .where((item) => item.kind == SmsPlaceholderKind.merchant)
+            .length >
+        1) {
       return null;
     }
     if (!_validPlaceholders(template.sampleText, allPlaceholders)) return null;

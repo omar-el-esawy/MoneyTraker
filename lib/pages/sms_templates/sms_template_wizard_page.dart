@@ -2,7 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 
 import 'package:money_traker/constants/app_constants.dart';
+import 'package:money_traker/data/database_helper.dart';
+import 'package:money_traker/pages/sms/category_rule_sheet.dart';
 import 'package:money_traker/services/sms_template_sync_service.dart';
+import 'package:money_traker/sms/sms_models.dart';
+import 'package:money_traker/sms/sms_rule_engine.dart';
+import 'package:money_traker/store/money_storage.dart';
 import 'package:money_traker/sms/template_engine/sms_amount_parser.dart';
 import 'package:money_traker/sms/template_engine/sms_template_compiler.dart';
 import 'package:money_traker/sms/template_engine/sms_template_mobile_store.dart';
@@ -54,11 +59,15 @@ class SmsTemplateWizardPage extends StatefulWidget {
 class _SmsTemplateWizardPageState extends State<SmsTemplateWizardPage> {
   SmsTemplateStoredMessage? _message;
   SmsTemplateType? _type;
+  SmsPlaceholderKind _moneyKind = SmsPlaceholderKind.amount;
   SmsTextRange? _amount;
   List<SmsTextRange> _directions = const [];
   final List<SmsPlaceholder> _placeholders = [];
+  List<_WordMapping> _wordCategories = const [];
+  bool _saveWordDictionary = false;
   bool _running = false;
   String _step = 'Ready';
+  double _progress = 0;
 
   @override
   void initState() {
@@ -75,55 +84,84 @@ class _SmsTemplateWizardPageState extends State<SmsTemplateWizardPage> {
       if (selected == null || !mounted) return;
       setState(() {
         _message = selected;
-        _step = '1 of 5 • Transaction type';
+        _step = 'Transaction type';
+        _progress = .16;
       });
 
       final type = await _chooseType();
       if (type == null || !mounted) return;
       setState(() {
         _type = type;
-        _step = '2 of 5 • Amount';
+        _step = 'Amount or balance';
+        _progress = .32;
       });
 
-      final amount = await _chooseAmount(selected.body);
+      final moneyKind = await _chooseMoneyKind();
+      if (moneyKind == null || !mounted) return;
+      setState(() {
+        _moneyKind = moneyKind;
+        _step = moneyKind == SmsPlaceholderKind.balance
+            ? 'Account balance'
+            : 'Transaction amount';
+        _progress = .48;
+      });
+
+      final amount = await _chooseMoneyValue(selected.body, moneyKind);
       if (amount == null || !mounted) return;
       final parsed = SmsAmountParser.parse(
         selected.body.substring(amount.start, amount.end),
       );
-      if (parsed == null || !await _confirmAmount(parsed) || !mounted) return;
+      if (parsed == null ||
+          !await _confirmMoney(parsed, moneyKind) ||
+          !mounted) {
+        return;
+      }
       setState(() {
         _amount = amount;
-        _step = '3 of 5 • Direction words';
+        _step = 'Direction words';
+        _progress = .64;
       });
 
       final directions = await _chooseDirections(selected.body, amount);
       if (directions == null || directions.isEmpty || !mounted) return;
       setState(() {
         _directions = directions;
-        _step = '4 of 5 • Other changing parts';
+        _step = 'Changing parts';
+        _progress = .8;
       });
 
-      final markChangingParts = await _askForChangingParts();
-      if (markChangingParts == true && mounted) {
-        final ranges = await _chooseOtherRanges(selected.body);
-        if (ranges == null || !mounted) return;
-        setState(() {
-          _placeholders
-            ..clear()
-            ..addAll(
-              ranges.map(
-                (range) => SmsPlaceholder(
-                  kind: SmsPlaceholderKind.other,
-                  range: range,
-                ),
+      final ranges = await _chooseOtherRanges(selected.body);
+      if (ranges == null || !mounted) return;
+      setState(() {
+        _placeholders
+          ..clear()
+          ..addAll(
+            ranges.map(
+              (range) => SmsPlaceholder(
+                kind: SmsPlaceholderKind.other,
+                range: range,
               ),
-            );
-        });
+            ),
+          );
+        _step = 'Categories';
+        _progress = .9;
+      });
+
+      final categorize = await _askForWordCategories();
+      if (!mounted) return;
+      if (categorize == true) {
+        final mappings = await _chooseWordCategories(selected.body);
+        if (mappings == null || !mounted) return;
+        _wordCategories = mappings;
+        _saveWordDictionary = true;
       } else {
-        _placeholders.clear();
+        _wordCategories = const [];
       }
       if (!mounted) return;
-      setState(() => _step = '5 of 5 • Preview');
+      setState(() {
+        _step = 'Preview';
+        _progress = 1;
+      });
       await _previewAndSave();
     } finally {
       if (mounted) setState(() => _running = false);
@@ -188,7 +226,59 @@ class _SmsTemplateWizardPageState extends State<SmsTemplateWizardPage> {
     );
   }
 
-  Future<SmsTextRange?> _chooseAmount(String text) {
+  Future<SmsPlaceholderKind?> _chooseMoneyKind() {
+    return showModalBottomSheet<SmsPlaceholderKind>(
+      context: context,
+      isDismissible: false,
+      enableDrag: false,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Which number should this template use?',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Use the transaction amount when the message says how much moved. Use the account balance when the message only tells you the new balance.',
+                ),
+                const SizedBox(height: 18),
+                _ChoiceTile(
+                  icon: Icons.payments_outlined,
+                  color: AppConstants.primaryColor,
+                  title: 'Transaction amount',
+                  subtitle: 'Add or subtract this number',
+                  onTap: () =>
+                      Navigator.pop(context, SmsPlaceholderKind.amount),
+                ),
+                const SizedBox(height: 10),
+                _ChoiceTile(
+                  icon: Icons.account_balance_wallet_outlined,
+                  color: const Color(0xFF15803D),
+                  title: 'Account balance',
+                  subtitle: 'Set the money source to this number',
+                  onTap: () =>
+                      Navigator.pop(context, SmsPlaceholderKind.balance),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<SmsTextRange?> _chooseMoneyValue(
+    String text,
+    SmsPlaceholderKind kind,
+  ) {
+    final balance = kind == SmsPlaceholderKind.balance;
     final candidates = _numberRanges(text);
     return showModalBottomSheet<SmsTextRange>(
       context: context,
@@ -203,12 +293,14 @@ class _SmsTemplateWizardPageState extends State<SmsTemplateWizardPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Tap the transaction amount',
+              balance ? 'Tap the account balance' : 'Tap the transaction amount',
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 7),
-            const Text(
-              'Only the value you tap becomes the amount. Other numbers stay separate.',
+            Text(
+              balance
+                  ? 'The money source becomes this balance. Other numbers stay separate.'
+                  : 'Only the value you tap becomes the amount. Other numbers stay separate.',
             ),
             const SizedBox(height: 18),
             _MessageTokenWrap(
@@ -223,7 +315,8 @@ class _SmsTemplateWizardPageState extends State<SmsTemplateWizardPage> {
     );
   }
 
-  Future<bool> _confirmAmount(double amount) async {
+  Future<bool> _confirmMoney(double amount, SmsPlaceholderKind kind) async {
+    final balance = kind == SmsPlaceholderKind.balance;
     return await showModalBottomSheet<bool>(
           context: context,
           isDismissible: false,
@@ -236,7 +329,7 @@ class _SmsTemplateWizardPageState extends State<SmsTemplateWizardPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Is this amount correct?',
+                  balance ? 'Is this balance correct?' : 'Is this amount correct?',
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
                 const SizedBox(height: 16),
@@ -336,22 +429,6 @@ class _SmsTemplateWizardPageState extends State<SmsTemplateWizardPage> {
     );
   }
 
-  Future<bool?> _askForChangingParts() {
-    return showModalBottomSheet<bool>(
-      context: context,
-      isDismissible: false,
-      enableDrag: false,
-      showDragHandle: true,
-      builder: (context) => _ChangingPartsPrompt(
-        title: 'Mark every other changing part',
-        body:
-            'Merchant, date, time, balance, card digits and reference numbers usually change. Mark each one so fixed text stays reliable.',
-        primary: 'Mark a changing part',
-        secondary: 'There are no other parts',
-      ),
-    );
-  }
-
   Future<List<SmsTextRange>?> _chooseOtherRanges(String text) {
     final tokens = _wordLikeRanges(
       text,
@@ -376,7 +453,7 @@ class _SmsTemplateWizardPageState extends State<SmsTemplateWizardPage> {
               ),
               const SizedBox(height: 7),
               const Text(
-                'Tap every word that can change, even when the words are in different places. Tap again to remove it.',
+                'Tap every part that can change between messages. If nothing else changes, press Done.',
               ),
               const SizedBox(height: 18),
               _MessageTokenWrap(
@@ -398,10 +475,8 @@ class _SmsTemplateWizardPageState extends State<SmsTemplateWizardPage> {
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
-                  onPressed: selected.isEmpty
-                      ? null
-                      : () => Navigator.pop(context, [...selected]),
-                  child: const Text('Continue'),
+                  onPressed: () => Navigator.pop(context, [...selected]),
+                  child: const Text('Done'),
                 ),
               ),
             ],
@@ -409,6 +484,85 @@ class _SmsTemplateWizardPageState extends State<SmsTemplateWizardPage> {
         ),
       ),
     );
+  }
+
+  Future<bool?> _askForWordCategories() {
+    return showModalBottomSheet<bool>(
+      context: context,
+      isDismissible: false,
+      enableDrag: false,
+      showDragHandle: true,
+      builder: (context) => Padding(
+        padding: const EdgeInsets.fromLTRB(22, 0, 22, 28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Categorize by a word?',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Optional. A word in the message can file that transfer under a category. You can skip this.',
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Choose words'),
+              ),
+            ),
+            SizedBox(
+              width: double.infinity,
+              child: TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Not now'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<List<_WordMapping>?> _chooseWordCategories(String text) {
+    return showModalBottomSheet<List<_WordMapping>>(
+      context: context,
+      isDismissible: false,
+      enableDrag: false,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => _WordCategorySheet(bankId: widget.bank.id, text: text),
+    );
+  }
+
+  Future<void> _saveWordCategories() async {
+    if (!_saveWordDictionary) return;
+    final db = DatabaseHelper.instance;
+    final existing = await db.getSmsCategoryRules(bankId: widget.bank.id);
+    final kept = {
+      for (final item in _wordCategories) item.key,
+    };
+    for (final rule in existing) {
+      final id = rule.id;
+      final key = rule.pattern?.key ?? rule.word.toLowerCase();
+      if (id != null && !kept.contains(key)) {
+        await db.deleteSmsCategoryRule(id);
+      }
+    }
+    for (final item in _wordCategories) {
+      await db.insertSmsCategoryRule(
+        SmsCategoryRule(
+          bankId: widget.bank.id,
+          word: item.word,
+          tagId: item.tagId,
+          pattern: item.pattern,
+          createdAt: DateTime.now(),
+        ),
+      );
+    }
   }
 
   Future<void> _previewAndSave() async {
@@ -424,7 +578,7 @@ class _SmsTemplateWizardPageState extends State<SmsTemplateWizardPage> {
       bankId: widget.bank.id,
       sampleText: message.body,
       type: _type!,
-      amount: SmsPlaceholder(kind: SmsPlaceholderKind.amount, range: _amount!),
+      amount: SmsPlaceholder(kind: _moneyKind, range: _amount!),
       directionRanges: _directions,
       placeholders: List.unmodifiable(_placeholders),
     );
@@ -515,6 +669,7 @@ class _SmsTemplateWizardPageState extends State<SmsTemplateWizardPage> {
       template: template,
       message: message,
     );
+    await _saveWordCategories();
     if (!mounted) return;
     Navigator.pop(context, true);
   }
@@ -529,14 +684,7 @@ class _SmsTemplateWizardPageState extends State<SmsTemplateWizardPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             LinearProgressIndicator(
-              value: switch (_step.characters.firstOrNull) {
-                '1' => .2,
-                '2' => .4,
-                '3' => .6,
-                '4' => .8,
-                '5' => 1,
-                _ => 0,
-              },
+              value: _progress,
               borderRadius: BorderRadius.circular(20),
             ),
             const SizedBox(height: 14),
@@ -902,50 +1050,219 @@ class _ChoiceTile extends StatelessWidget {
   }
 }
 
-class _ChangingPartsPrompt extends StatelessWidget {
-  final String title;
-  final String body;
-  final String primary;
-  final String secondary;
+class _WordMapping {
+  final String word;
+  final int tagId;
+  final String categoryName;
+  final SmsRulePattern? pattern;
 
-  const _ChangingPartsPrompt({
-    required this.title,
-    required this.body,
-    required this.primary,
-    required this.secondary,
+  const _WordMapping({
+    required this.word,
+    required this.tagId,
+    required this.categoryName,
+    this.pattern,
   });
+
+  String get key => pattern?.key ?? word.toLowerCase();
+}
+
+class _WordCategorySheet extends StatefulWidget {
+  final String bankId;
+  final String text;
+
+  const _WordCategorySheet({required this.bankId, required this.text});
+
+  @override
+  State<_WordCategorySheet> createState() => _WordCategorySheetState();
+}
+
+class _WordCategorySheetState extends State<_WordCategorySheet> {
+  List<_WordMapping> _mappings = const [];
+  final List<SmsTextRange> _selected = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final rules = await DatabaseHelper.instance.getSmsCategoryRules(
+      bankId: widget.bankId,
+    );
+    final tags = await MoneyStorage().getTags();
+    final names = {
+      for (final tag in tags)
+        if (tag.id != null) tag.id!: tag.name,
+    };
+    if (!mounted) return;
+    setState(() {
+      _mappings = [
+        for (final rule in rules)
+          if (names[rule.tagId] != null)
+            _WordMapping(
+              word: rule.word,
+              tagId: rule.tagId,
+              categoryName: names[rule.tagId]!,
+              pattern: rule.pattern,
+            ),
+      ];
+      _loading = false;
+    });
+  }
+
+  void _toggle(SmsTextRange range) {
+    setState(() {
+      if (_selected.any((item) => _same(item, range))) {
+        _selected.removeWhere((item) => _same(item, range));
+      } else {
+        _selected.add(range);
+        _selected.sort((a, b) => a.start.compareTo(b.start));
+      }
+    });
+  }
+
+  SmsRulePattern? _selectedPattern() {
+    if (_selected.isEmpty) return null;
+    final tokens = SmsRuleEngine.tokenize(widget.text);
+    final words = <SmsPatternWord>[];
+    for (var index = 0; index < tokens.length; index++) {
+      final token = tokens[index];
+      if (!_selected.any(
+        (range) => _rangesOverlap(
+          token.start,
+          token.end,
+          range.start,
+          range.end,
+        ),
+      )) {
+        continue;
+      }
+      final word = SmsRuleEngine.normalizeWord(token.text);
+      if (word.isNotEmpty) {
+        words.add(SmsPatternWord(index: index, word: word));
+      }
+    }
+    if (words.isEmpty) return null;
+    return SmsRulePattern(tokenCount: tokens.length, words: words);
+  }
+
+  Future<void> _assignSelected() async {
+    final pattern = _selectedPattern();
+    if (pattern == null) return;
+    final label = pattern.display;
+    final tag = await showSmsCategoryPicker(
+      context: context,
+      arabic: Localizations.localeOf(context).languageCode == 'ar',
+      word: label,
+    );
+    if (tag == null || tag.id == null || !mounted) return;
+    setState(() {
+      _mappings = [
+        for (final item in _mappings)
+          if (item.key != pattern.key) item,
+        _WordMapping(
+          word: label,
+          tagId: tag.id!,
+          categoryName: tag.name,
+          pattern: pattern,
+        ),
+      ];
+      _selected.clear();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(22, 0, 22, 28),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title, style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 8),
-          Text(body),
-          const SizedBox(height: 20),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: Text(primary),
+    final words = _wordRanges(widget.text);
+    return FractionallySizedBox(
+      heightFactor: .86,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Word dictionary',
+              style: Theme.of(context).textTheme.titleLarge,
             ),
-          ),
-          SizedBox(
-            width: double.infinity,
-            child: TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: Text(secondary),
+            const SizedBox(height: 7),
+            const Text(
+              'Select one or more words, then choose their category. The words can be separated; all selected positions must match.',
             ),
-          ),
-        ],
+            const SizedBox(height: 16),
+            _MessageTokenWrap(
+              text: widget.text,
+              selectableRanges: words,
+              selectedRanges: _selected,
+              onTap: _toggle,
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.tonal(
+                onPressed: _selected.isEmpty ? null : _assignSelected,
+                child: Text(
+                  _selected.isEmpty
+                      ? 'Select words'
+                      : 'Categorize ${_selected.length} selected word${_selected.length == 1 ? '' : 's'}',
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Dictionary',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _mappings.isEmpty
+                  ? const Text('No words mapped yet. Done is ready either way.')
+                  : ListView.separated(
+                      itemCount: _mappings.length,
+                      separatorBuilder: (_, _) => const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final item = _mappings[index];
+                        return ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(item.word),
+                          subtitle: Text(item.categoryName),
+                          trailing: IconButton(
+                            tooltip: 'Remove',
+                            onPressed: () {
+                              setState(() {
+                                _mappings = [
+                                  for (final mapping in _mappings)
+                                    if (mapping.key != item.key) mapping,
+                                ];
+                              });
+                            },
+                            icon: const Icon(Icons.close),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () => Navigator.pop(context, [..._mappings]),
+                child: const Text('Done'),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
+
+bool _rangesOverlap(int aStart, int aEnd, int bStart, int bEnd) =>
+    aStart < bEnd && bStart < aEnd;
 
 List<SmsTextRange> _numberRanges(String text) {
   final expression = RegExp(

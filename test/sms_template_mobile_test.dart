@@ -456,6 +456,33 @@ void main() {
     expect(smsInboxSenderFilter(const [' ', '']), isNull);
   });
 
+  test('amount and balance templates change money differently', () {
+    final amount = smsTemplateMoneyChange(
+      result: const SmsParsedResult(
+        templateId: 'amount',
+        amount: 100,
+        type: SmsTemplateType.debit,
+      ),
+      sourceAmount: 1000,
+    );
+    final balance = smsTemplateMoneyChange(
+      result: const SmsParsedResult(
+        templateId: 'balance',
+        amount: 900,
+        type: SmsTemplateType.debit,
+        balance: 900,
+        usesBalance: true,
+      ),
+      sourceAmount: 1000,
+    );
+
+    expect(amount.delta, -100);
+    expect(amount.recordedAmount, 100);
+    expect(balance.delta, -100);
+    expect(balance.debit, isTrue);
+    expect(balance.recordedAmount, 100);
+  });
+
   test('a taught message applies only after SMS Templates was opened', () {
     final opened = DateTime(2026, 11, 8, 19, 40);
 
