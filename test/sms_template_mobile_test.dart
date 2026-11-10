@@ -167,20 +167,14 @@ void main() {
     ]);
   });
 
-  test('wizard refuses a draft without both amount and direction', () {
+  test('wizard can save once the type and amount are chosen', () {
     const empty = SmsTemplateDraft(type: SmsTemplateType.debit);
-    const amountOnly = SmsTemplateDraft(
-      type: SmsTemplateType.debit,
-      amountRange: SmsTextRange(start: 4, end: 7),
-    );
     const complete = SmsTemplateDraft(
       type: SmsTemplateType.debit,
       amountRange: SmsTextRange(start: 4, end: 7),
-      directionRanges: [SmsTextRange(start: 0, end: 3)],
     );
 
     expect(empty.canSave, isFalse);
-    expect(amountOnly.canSave, isFalse);
     expect(complete.canSave, isTrue);
   });
 
@@ -369,9 +363,88 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
+    expect(find.text('Choose a real message'), findsNothing);
     expect(find.text('What happened to the money?'), findsOneWidget);
+    expect(find.text('Debited EGP150 at STAR MARKET'), findsOneWidget);
     expect(find.text('Debit'), findsOneWidget);
     expect(find.text('Credit'), findsOneWidget);
+
+    await tester.tap(find.text('Debit'));
+    await tester.pump();
+
+    expect(find.text('Choose the money'), findsOneWidget);
+    expect(find.text('150'), findsOneWidget);
+    expect(find.text('Debited'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('Debited')).dx,
+      lessThan(tester.getTopLeft(find.text('150')).dx),
+    );
+    expect(
+      Directionality.of(tester.element(find.text('150'))),
+      TextDirection.ltr,
+    );
+    expect(
+      tester.widget<Text>(find.text('150')).textDirection,
+      TextDirection.ltr,
+    );
+  });
+
+  testWidgets('arabic template message reads from right to left', (
+    tester,
+  ) async {
+    final now = DateTime(2026, 11, 3);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SmsTemplateWizardPage(
+          bank: SmsTemplateBank(
+            id: 'wizard-bank',
+            name: 'Wizard Bank',
+            senders: const ['BANK'],
+            createdAt: now,
+          ),
+          initialMessage: SmsTemplateStoredMessage(
+            hash: 'arabic-message',
+            smsId: 'arabic-message',
+            sender: 'BANK',
+            body: 'تم خصم مبلغ 150 جنيه',
+            date: now,
+            bankId: 'wizard-bank',
+            status: SmsTemplateMessageStatus.unrecognized,
+            copiedAt: now,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('تم خصم مبلغ 150 جنيه'), findsOneWidget);
+    expect(find.text('Choose a real message'), findsNothing);
+
+    await tester.tap(find.text('Credit'));
+    await tester.pump();
+
+    expect(find.text('خصم'), findsOneWidget);
+    expect(find.text('150'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('تم')).dx,
+      greaterThan(tester.getTopLeft(find.text('خصم')).dx),
+    );
+    expect(
+      tester.getTopLeft(find.text('خصم')).dx,
+      greaterThan(tester.getTopLeft(find.text('150')).dx),
+    );
+    expect(
+      Directionality.of(tester.element(find.text('150'))),
+      TextDirection.rtl,
+    );
+    expect(
+      tester.widget<Text>(find.text('خصم')).textDirection,
+      TextDirection.rtl,
+    );
+    expect(
+      tester.widget<Text>(find.text('150')).textDirection,
+      TextDirection.ltr,
+    );
   });
 
   testWidgets('operations screen shows an active Undo action', (tester) async {

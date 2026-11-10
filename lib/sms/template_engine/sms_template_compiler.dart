@@ -83,8 +83,7 @@ class SmsTemplateCompiler {
         template.bankId.trim().isEmpty ||
         template.sampleText.trim().isEmpty ||
         (template.amount.kind != SmsPlaceholderKind.amount &&
-            template.amount.kind != SmsPlaceholderKind.balance) ||
-        template.directionRanges.isEmpty) {
+            template.amount.kind != SmsPlaceholderKind.balance)) {
       return null;
     }
 
@@ -159,10 +158,12 @@ class SmsTemplateCompiler {
       ..write(r'$');
     fixedText.write(tail);
 
-    final direction = SmsDirectionPattern.compile(
-      template.sampleText,
-      template.directionRanges,
-    );
+    final direction = template.directionRanges.isEmpty
+        ? const SmsDirectionPattern.any()
+        : SmsDirectionPattern.compile(
+            template.sampleText,
+            template.directionRanges,
+          );
     if (direction == null) return null;
 
     return CompiledSmsTemplate._(

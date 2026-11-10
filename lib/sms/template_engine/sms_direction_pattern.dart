@@ -6,6 +6,9 @@ class SmsDirectionPattern {
 
   const SmsDirectionPattern._(this.anchors);
 
+  /// No extra direction words. The template type already says debit or credit.
+  const SmsDirectionPattern.any() : anchors = const [];
+
   static SmsDirectionPattern? compile(
     String sample,
     List<SmsTextRange> ranges,
@@ -35,6 +38,7 @@ class SmsDirectionPattern {
   }
 
   bool matches(String message) {
+    if (anchors.isEmpty) return true;
     final body = SmsNormalizer.normalize(message).text;
     final lowerBody = body.toLowerCase();
     var cursor = 0;

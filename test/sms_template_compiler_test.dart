@@ -288,23 +288,24 @@ void main() {
       expect(result.amount, 750.50);
     });
 
-    test('rejects invalid templates before matching', () {
+    test('matches from the message text when debit or credit is already chosen', () {
       const sample = 'تم خصم 150 جنيه';
       final amount = _placeholder(sample, SmsPlaceholderKind.amount, '150');
-
-      expect(
-        SmsTemplateCompiler.compile(
-          SmsTemplate(
-            id: 'no-direction',
-            bankId: 'bank',
-            sampleText: sample,
-            type: SmsTemplateType.debit,
-            amount: amount,
-            directionRanges: const [],
-          ),
+      final compiled = SmsTemplateCompiler.compile(
+        SmsTemplate(
+          id: 'no-direction',
+          bankId: 'bank',
+          sampleText: sample,
+          type: SmsTemplateType.debit,
+          amount: amount,
+          directionRanges: const [],
         ),
-        isNull,
       );
+
+      expect(compiled, isNotNull);
+      expect(compiled!.match('تم خصم 80 جنيه')?.amount, 80);
+      expect(compiled.match('تم خصم 80 جنيه')?.type, SmsTemplateType.debit);
+      expect(compiled.match('تم إيداع 80 جنيه'), isNull);
       expect(
         SmsTemplateCompiler.compile(
           SmsTemplate(

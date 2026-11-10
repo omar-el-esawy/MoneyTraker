@@ -7,22 +7,28 @@ import 'package:money_traker/pages/sms/category_rule_sheet.dart';
 import 'package:money_traker/services/sms_template_sync_service.dart';
 import 'package:money_traker/sms/sms_models.dart';
 import 'package:money_traker/sms/sms_rule_engine.dart';
-import 'package:money_traker/store/money_storage.dart';
 import 'package:money_traker/sms/template_engine/sms_amount_parser.dart';
 import 'package:money_traker/sms/template_engine/sms_template_compiler.dart';
 import 'package:money_traker/sms/template_engine/sms_template_mobile_store.dart';
 import 'package:money_traker/sms/template_engine/template_models.dart';
+import 'package:money_traker/store/money_storage.dart';
 
 TextDirection _messageDirection(String text) {
   final firstStrong = RegExp(
     r'[A-Za-z\u0590-\u08FF\uFB1D-\uFDFD\uFE70-\uFEFC]',
   ).firstMatch(text);
   if (firstStrong == null) return TextDirection.ltr;
-
-  final character = firstStrong.group(0)!;
   return RegExp(
         r'[\u0590-\u08FF\uFB1D-\uFDFD\uFE70-\uFEFC]',
-      ).hasMatch(character)
+      ).hasMatch(firstStrong.group(0)!)
+      ? TextDirection.rtl
+      : TextDirection.ltr;
+}
+
+TextDirection _scriptDirection(String text) {
+  return RegExp(
+        r'[\u0590-\u08FF\uFB1D-\uFDFD\uFE70-\uFEFC]',
+      ).hasMatch(text)
       ? TextDirection.rtl
       : TextDirection.ltr;
 }
@@ -30,17 +36,25 @@ TextDirection _messageDirection(String text) {
 class SmsTemplateDraft {
   final SmsTemplateType? type;
   final SmsTextRange? amountRange;
-  final List<SmsTextRange> directionRanges;
 
-  const SmsTemplateDraft({
-    this.type,
-    this.amountRange,
-    this.directionRanges = const [],
-  });
+  const SmsTemplateDraft({this.type, this.amountRange});
 
-  bool get canSave =>
-      type != null && amountRange != null && directionRanges.isNotEmpty;
+  bool get canSave => type != null && amountRange != null;
 }
+
+enum _WizardPhase {
+  message,
+  inbox,
+  type,
+  money,
+  changing,
+  askCategories,
+  categories,
+  preview,
+  done,
+}
+
+enum _MarkMode { money, changing, pick }
 
 class SmsTemplateWizardPage extends StatefulWidget {
   final SmsTemplateBank bank;
@@ -57,494 +71,233 @@ class SmsTemplateWizardPage extends StatefulWidget {
 }
 
 class _SmsTemplateWizardPageState extends State<SmsTemplateWizardPage> {
+  late final List<_WizardPhase> _stack;
+  bool _closing = false;
   SmsTemplateStoredMessage? _message;
   SmsTemplateType? _type;
   SmsPlaceholderKind _moneyKind = SmsPlaceholderKind.amount;
   SmsTextRange? _amount;
-  List<SmsTextRange> _directions = const [];
-  final List<SmsPlaceholder> _placeholders = [];
+  final List<SmsTextRange> _changing = [];
   List<_WordMapping> _wordCategories = const [];
   bool _saveWordDictionary = false;
-  bool _running = false;
-  String _step = 'Ready';
-  double _progress = 0;
+  bool _saving = false;
+  bool _previewLoading = false;
+  bool _previewReady = false;
+  int _previewTotal = 0;
+  int _previewGeneration = 0;
+  List<SmsTemplateStoredMessage> _previewMatches = const [];
+
+  _WizardPhase get _phase => _stack.last;
 
   @override
   void initState() {
     super.initState();
     _message = widget.initialMessage;
-    WidgetsBinding.instance.addPostFrameCallback((_) => _runWizard());
+    _stack = [
+      widget.initialMessage == null
+          ? _WizardPhase.message
+          : _WizardPhase.type,
+    ];
   }
 
-  Future<void> _runWizard() async {
-    if (_running) return;
-    setState(() => _running = true);
-    try {
-      final selected = _message ?? await _chooseMessage();
-      if (selected == null || !mounted) return;
-      setState(() {
-        _message = selected;
-        _step = 'Transaction type';
-        _progress = .16;
-      });
+  void _push(_WizardPhase phase) {
+    setState(() => _stack.add(phase));
+    if (phase == _WizardPhase.preview) _loadPreview();
+  }
 
-      final type = await _chooseType();
-      if (type == null || !mounted) return;
-      setState(() {
-        _type = type;
-        _step = 'Amount or balance';
-        _progress = .32;
-      });
+  void _back() {
+    if (_phase == _WizardPhase.done) {
+      _closeCreated();
+      return;
+    }
+    if (_stack.length > 1) {
+      setState(() => _stack.removeLast());
+      return;
+    }
+    Navigator.maybePop(context);
+  }
 
-      final moneyKind = await _chooseMoneyKind();
-      if (moneyKind == null || !mounted) return;
-      setState(() {
-        _moneyKind = moneyKind;
-        _step = moneyKind == SmsPlaceholderKind.balance
-            ? 'Account balance'
-            : 'Transaction amount';
-        _progress = .48;
-      });
+  void _closeCreated() {
+    if (_closing) return;
+    setState(() => _closing = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Navigator.pop(context, true);
+    });
+  }
 
-      final amount = await _chooseMoneyValue(selected.body, moneyKind);
-      if (amount == null || !mounted) return;
-      final parsed = SmsAmountParser.parse(
-        selected.body.substring(amount.start, amount.end),
-      );
-      if (parsed == null ||
-          !await _confirmMoney(parsed, moneyKind) ||
-          !mounted) {
-        return;
-      }
-      setState(() {
-        _amount = amount;
-        _step = 'Direction words';
-        _progress = .64;
-      });
+  void _chooseType(SmsTemplateType type) {
+    setState(() {
+      _type = type;
+      _stack.add(_WizardPhase.money);
+    });
+  }
 
-      final directions = await _chooseDirections(selected.body, amount);
-      if (directions == null || directions.isEmpty || !mounted) return;
-      setState(() {
-        _directions = directions;
-        _step = 'Changing parts';
-        _progress = .8;
-      });
-
-      final ranges = await _chooseOtherRanges(selected.body);
-      if (ranges == null || !mounted) return;
-      setState(() {
-        _placeholders
-          ..clear()
-          ..addAll(
-            ranges.map(
-              (range) => SmsPlaceholder(
-                kind: SmsPlaceholderKind.other,
-                range: range,
-              ),
-            ),
-          );
-        _step = 'Categories';
-        _progress = .9;
-      });
-
-      final categorize = await _askForWordCategories();
-      if (!mounted) return;
-      if (categorize == true) {
-        final mappings = await _chooseWordCategories(selected.body);
-        if (mappings == null || !mounted) return;
-        _wordCategories = mappings;
-        _saveWordDictionary = true;
-      } else {
+  void _useMessage(SmsTemplateStoredMessage message) {
+    setState(() {
+      final changed = _message?.hash != message.hash;
+      _message = message;
+      if (changed) {
+        _type = null;
+        _amount = null;
+        _moneyKind = SmsPlaceholderKind.amount;
+        _changing.clear();
         _wordCategories = const [];
+        _saveWordDictionary = false;
       }
-      if (!mounted) return;
+      if (_stack.last == _WizardPhase.inbox) _stack.removeLast();
+      if (_stack.last != _WizardPhase.type) _stack.add(_WizardPhase.type);
+    });
+  }
+
+  Future<void> _pickMoney(SmsTextRange range) async {
+    final body = _message?.body;
+    if (body == null) return;
+    final raw = body.substring(range.start, range.end);
+    final parsed = SmsAmountParser.parse(raw);
+    if (parsed == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This number cannot be used as money.')),
+      );
+      return;
+    }
+    final kind = await showModalBottomSheet<SmsPlaceholderKind>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                raw,
+                textDirection: TextDirection.ltr,
+                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                  color: const Color(0xFF15803D),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text('Reads as ${parsed.toStringAsFixed(2)}'),
+              const SizedBox(height: 16),
+              _ChoiceTile(
+                icon: Icons.payments_outlined,
+                color: AppConstants.primaryColor,
+                title: 'Transaction amount',
+                subtitle: 'Add or subtract this number',
+                onTap: () => Navigator.pop(context, SmsPlaceholderKind.amount),
+              ),
+              const SizedBox(height: 10),
+              _ChoiceTile(
+                icon: Icons.account_balance_wallet_outlined,
+                color: const Color(0xFF15803D),
+                title: 'Account balance',
+                subtitle: 'Set the money source to this number',
+                onTap: () => Navigator.pop(context, SmsPlaceholderKind.balance),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (kind == null || !mounted) return;
+    setState(() {
+      _amount = range;
+      _moneyKind = kind;
+      _changing.removeWhere((item) => _overlap(item, range));
+    });
+  }
+
+  void _toggleChanging(SmsTextRange range) {
+    if (_amount != null && _overlap(range, _amount!)) return;
+    setState(() {
+      if (_changing.any((item) => _same(item, range))) {
+        _changing.removeWhere((item) => _same(item, range));
+      } else {
+        _changing.add(range);
+        _changing.sort((a, b) => a.start.compareTo(b.start));
+      }
+    });
+  }
+
+  SmsTemplate? _buildTemplate() {
+    final message = _message;
+    final type = _type;
+    final amount = _amount;
+    if (message == null || type == null || amount == null) return null;
+    return SmsTemplate(
+      id: 'template_${DateTime.now().microsecondsSinceEpoch}',
+      bankId: widget.bank.id,
+      sampleText: message.body,
+      type: type,
+      amount: SmsPlaceholder(kind: _moneyKind, range: amount),
+      directionRanges: const [],
+      placeholders: [
+        for (final range in _changing)
+          SmsPlaceholder(kind: SmsPlaceholderKind.other, range: range),
+      ],
+    );
+  }
+
+  Future<void> _loadPreview() async {
+    final generation = ++_previewGeneration;
+    final template = _buildTemplate();
+    final message = _message;
+    if (template == null || message == null) return;
+    setState(() => _previewLoading = true);
+    try {
+      final compiled = SmsTemplateCompiler.compile(template);
+      final messages = await SmsTemplateMobileStore.instance.getMessages(
+        bankId: widget.bank.id,
+      );
+      if (!mounted || generation != _previewGeneration) return;
       setState(() {
-        _step = 'Preview';
-        _progress = 1;
+        _previewLoading = false;
+        _previewReady = compiled != null;
+        _previewTotal = messages.length;
+        _previewMatches = [
+          if (compiled != null)
+            for (final item in messages)
+              if (compiled.match(item.body) != null) item,
+        ];
       });
-      await _previewAndSave();
-    } finally {
-      if (mounted) setState(() => _running = false);
+    } catch (_) {
+      if (!mounted || generation != _previewGeneration) return;
+      setState(() {
+        _previewLoading = false;
+        _previewReady = false;
+        _previewMatches = const [];
+      });
     }
   }
 
-  Future<SmsTemplateStoredMessage?> _chooseMessage() async {
-    final messages = await SmsTemplateMobileStore.instance.getMessages(
-      bankId: widget.bank.id,
-    );
-    if (!mounted) return null;
-    return showModalBottomSheet<SmsTemplateStoredMessage>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (context) =>
-          _ChooseMessageSheet(bank: widget.bank, saved: messages),
-    );
-  }
-
-  Future<SmsTemplateType?> _chooseType() {
-    return showModalBottomSheet<SmsTemplateType>(
-      context: context,
-      isDismissible: false,
-      enableDrag: false,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'What happened to the money?',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 8),
-                const Text('Choose this before marking any words.'),
-                const SizedBox(height: 18),
-                _ChoiceTile(
-                  icon: Icons.north_east,
-                  color: AppConstants.errorColor,
-                  title: 'Debit',
-                  subtitle: 'Money left the account',
-                  onTap: () => Navigator.pop(context, SmsTemplateType.debit),
-                ),
-                const SizedBox(height: 10),
-                _ChoiceTile(
-                  icon: Icons.south_west,
-                  color: const Color(0xFF15803D),
-                  title: 'Credit',
-                  subtitle: 'Money entered the account',
-                  onTap: () => Navigator.pop(context, SmsTemplateType.credit),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<SmsPlaceholderKind?> _chooseMoneyKind() {
-    return showModalBottomSheet<SmsPlaceholderKind>(
-      context: context,
-      isDismissible: false,
-      enableDrag: false,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Which number should this template use?',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Use the transaction amount when the message says how much moved. Use the account balance when the message only tells you the new balance.',
-                ),
-                const SizedBox(height: 18),
-                _ChoiceTile(
-                  icon: Icons.payments_outlined,
-                  color: AppConstants.primaryColor,
-                  title: 'Transaction amount',
-                  subtitle: 'Add or subtract this number',
-                  onTap: () =>
-                      Navigator.pop(context, SmsPlaceholderKind.amount),
-                ),
-                const SizedBox(height: 10),
-                _ChoiceTile(
-                  icon: Icons.account_balance_wallet_outlined,
-                  color: const Color(0xFF15803D),
-                  title: 'Account balance',
-                  subtitle: 'Set the money source to this number',
-                  onTap: () =>
-                      Navigator.pop(context, SmsPlaceholderKind.balance),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<SmsTextRange?> _chooseMoneyValue(
-    String text,
-    SmsPlaceholderKind kind,
-  ) {
-    final balance = kind == SmsPlaceholderKind.balance;
-    final candidates = _numberRanges(text);
-    return showModalBottomSheet<SmsTextRange>(
-      context: context,
-      isDismissible: false,
-      enableDrag: false,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (context) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              balance ? 'Tap the account balance' : 'Tap the transaction amount',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 7),
-            Text(
-              balance
-                  ? 'The money source becomes this balance. Other numbers stay separate.'
-                  : 'Only the value you tap becomes the amount. Other numbers stay separate.',
-            ),
-            const SizedBox(height: 18),
-            _MessageTokenWrap(
-              text: text,
-              selectableRanges: candidates,
-              selectedRanges: const [],
-              onTap: (range) => Navigator.pop(context, range),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<bool> _confirmMoney(double amount, SmsPlaceholderKind kind) async {
-    final balance = kind == SmsPlaceholderKind.balance;
-    return await showModalBottomSheet<bool>(
-          context: context,
-          isDismissible: false,
-          enableDrag: false,
-          showDragHandle: true,
-          builder: (context) => Padding(
-            padding: const EdgeInsets.fromLTRB(22, 0, 22, 28),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  balance ? 'Is this balance correct?' : 'Is this amount correct?',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  amount.toStringAsFixed(2),
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    color: AppConstants.primaryColor,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.pop(context, false),
-                        child: const Text('No, cancel'),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: FilledButton(
-                        onPressed: () => Navigator.pop(context, true),
-                        child: const Text('Yes, correct'),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ) ??
-        false;
-  }
-
-  Future<List<SmsTextRange>?> _chooseDirections(
-    String text,
-    SmsTextRange amount,
-  ) {
-    final words = _wordRanges(
-      text,
-    ).where((range) => !_overlap(range, amount)).toList();
-    final selected = <SmsTextRange>[];
-    return showModalBottomSheet<List<SmsTextRange>>(
-      context: context,
-      isDismissible: false,
-      enableDrag: false,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setSheetState) => Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Tap the direction word(s)',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 7),
-              const Text(
-                'Select one or several words. They may be apart, but must appear in this order.',
-              ),
-              const SizedBox(height: 18),
-              _MessageTokenWrap(
-                text: text,
-                selectableRanges: words,
-                selectedRanges: selected,
-                onTap: (range) {
-                  setSheetState(() {
-                    if (selected.any((item) => _same(item, range))) {
-                      selected.removeWhere((item) => _same(item, range));
-                    } else {
-                      selected.add(range);
-                      selected.sort((a, b) => a.start.compareTo(b.start));
-                    }
-                  });
-                },
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: selected.isEmpty
-                      ? null
-                      : () => Navigator.pop(
-                          context,
-                          _mergeAdjacentRanges(text, selected),
-                        ),
-                  child: const Text('Continue'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<List<SmsTextRange>?> _chooseOtherRanges(String text) {
-    final tokens = _wordLikeRanges(
-      text,
-    ).where((range) => _amount == null || !_overlap(range, _amount!)).toList();
-    final selected = <SmsTextRange>[];
-    return showModalBottomSheet<List<SmsTextRange>>(
-      context: context,
-      isDismissible: false,
-      enableDrag: false,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setSheetState) => Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Which text changes?',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 7),
-              const Text(
-                'Tap every part that can change between messages. If nothing else changes, press Done.',
-              ),
-              const SizedBox(height: 18),
-              _MessageTokenWrap(
-                text: text,
-                selectableRanges: tokens,
-                selectedRanges: selected,
-                onTap: (range) {
-                  setSheetState(() {
-                    if (selected.any((item) => _same(item, range))) {
-                      selected.removeWhere((item) => _same(item, range));
-                    } else {
-                      selected.add(range);
-                      selected.sort((a, b) => a.start.compareTo(b.start));
-                    }
-                  });
-                },
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: () => Navigator.pop(context, [...selected]),
-                  child: const Text('Done'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<bool?> _askForWordCategories() {
-    return showModalBottomSheet<bool>(
-      context: context,
-      isDismissible: false,
-      enableDrag: false,
-      showDragHandle: true,
-      builder: (context) => Padding(
-        padding: const EdgeInsets.fromLTRB(22, 0, 22, 28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Categorize by a word?',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Optional. A word in the message can file that transfer under a category. You can skip this.',
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Choose words'),
-              ),
-            ),
-            SizedBox(
-              width: double.infinity,
-              child: TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Not now'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<List<_WordMapping>?> _chooseWordCategories(String text) {
-    return showModalBottomSheet<List<_WordMapping>>(
-      context: context,
-      isDismissible: false,
-      enableDrag: false,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (context) => _WordCategorySheet(bankId: widget.bank.id, text: text),
-    );
+  Future<void> _save() async {
+    final message = _message;
+    final template = _buildTemplate();
+    final draft = SmsTemplateDraft(type: _type, amountRange: _amount);
+    if (message == null || template == null || !draft.canSave || _saving) {
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      await SmsTemplateSyncService.instance.saveTaughtTemplate(
+        template: template,
+        message: message,
+      );
+      await _saveWordCategories();
+      if (!mounted) return;
+      setState(() => _stack.add(_WizardPhase.done));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   Future<void> _saveWordCategories() async {
     if (!_saveWordDictionary) return;
     final db = DatabaseHelper.instance;
     final existing = await db.getSmsCategoryRules(bankId: widget.bank.id);
-    final kept = {
-      for (final item in _wordCategories) item.key,
-    };
+    final kept = {for (final item in _wordCategories) item.key};
     for (final rule in existing) {
       final id = rule.id;
       final key = rule.pattern?.key ?? rule.word.toLowerCase();
@@ -565,160 +318,477 @@ class _SmsTemplateWizardPageState extends State<SmsTemplateWizardPage> {
     }
   }
 
-  Future<void> _previewAndSave() async {
-    final message = _message;
-    final draft = SmsTemplateDraft(
-      type: _type,
-      amountRange: _amount,
-      directionRanges: _directions,
-    );
-    if (message == null || !draft.canSave) return;
-    final template = SmsTemplate(
-      id: 'template_${DateTime.now().microsecondsSinceEpoch}',
-      bankId: widget.bank.id,
-      sampleText: message.body,
-      type: _type!,
-      amount: SmsPlaceholder(kind: _moneyKind, range: _amount!),
-      directionRanges: _directions,
-      placeholders: List.unmodifiable(_placeholders),
-    );
-    final compiled = SmsTemplateCompiler.compile(template);
-    final messages = await SmsTemplateMobileStore.instance.getMessages(
-      bankId: widget.bank.id,
-    );
-    final matches = [
-      if (compiled != null)
-        for (final item in messages)
-          if (compiled.match(item.body) != null) item,
-    ];
-    if (!mounted) return;
-    final save = await showModalBottomSheet<bool>(
-      context: context,
-      isDismissible: false,
-      enableDrag: false,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (context) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
+  double get _progress => switch (_phase) {
+    _WizardPhase.message || _WizardPhase.inbox => .14,
+    _WizardPhase.type => .28,
+    _WizardPhase.money => .46,
+    _WizardPhase.changing => .64,
+    _WizardPhase.askCategories || _WizardPhase.categories => .78,
+    _WizardPhase.preview => .9,
+    _WizardPhase.done => 1,
+  };
+
+  String get _stepLabel => switch (_phase) {
+    _WizardPhase.message => 'Example message',
+    _WizardPhase.inbox => 'Inbox',
+    _WizardPhase.type => 'Transaction type',
+    _WizardPhase.money => 'Money',
+    _WizardPhase.changing => 'Changing parts',
+    _WizardPhase.askCategories || _WizardPhase.categories => 'Categories',
+    _WizardPhase.preview => 'Preview',
+    _WizardPhase.done => 'Template created',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: _closing || (_stack.length <= 1 && _phase != _WizardPhase.done),
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (_phase == _WizardPhase.done) {
+          _closeCreated();
+          return;
+        }
+        setState(() => _stack.removeLast());
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Teach a template'),
+          leading: BackButton(onPressed: _back),
+        ),
+        body: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              compiled == null ? 'Template needs a fix' : 'Preview',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 10),
-            if (compiled == null)
-              const Text(
-                'One of the marked values does not match its type. Go back and mark it more precisely.',
-              )
-            else ...[
-              Text(
-                'Matched ${matches.length} of ${messages.length} saved messages',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: AppConstants.primaryColor,
-                ),
-              ),
-              const SizedBox(height: 12),
-              for (final item in matches.take(3))
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: AppConstants.backgroundColor,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      item.body,
-                      textDirection: _messageDirection(item.body),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  LinearProgressIndicator(
+                    value: _progress,
+                    borderRadius: BorderRadius.circular(20),
                   ),
-                ),
-            ],
-            const SizedBox(height: 18),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.pop(context, false),
-                    child: Text(compiled == null ? 'Close' : 'Cancel'),
-                  ),
-                ),
-                if (compiled != null) ...[
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: FilledButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      child: const Text('Save template'),
+                  const SizedBox(height: 10),
+                  Text(
+                    _stepLabel,
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: AppConstants.textSecondary,
                     ),
                   ),
                 ],
+              ),
+            ),
+            Expanded(child: _phaseBody()),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _phaseBody() {
+    return switch (_phase) {
+      _WizardPhase.type => _typePhase(),
+      _WizardPhase.message => _MessagePhase(
+        bank: widget.bank,
+        suggested: widget.initialMessage,
+        onBrowseInbox: () => _push(_WizardPhase.inbox),
+        onPick: _useMessage,
+      ),
+      _WizardPhase.inbox => _InboxPhase(
+        bank: widget.bank,
+        onPick: _useMessage,
+      ),
+      _WizardPhase.money => _moneyPhase(),
+      _WizardPhase.changing => _changingPhase(),
+      _WizardPhase.askCategories => _askCategoriesPhase(),
+      _WizardPhase.categories => _WordCategoryEditor(
+        bankId: widget.bank.id,
+        text: _message?.body ?? '',
+        onDone: (mappings) {
+          _wordCategories = mappings;
+          _saveWordDictionary = true;
+          _push(_WizardPhase.preview);
+        },
+      ),
+      _WizardPhase.preview => _previewPhase(),
+      _WizardPhase.done => _donePhase(),
+    };
+  }
+
+  Widget _typePhase() {
+    final message = _message;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
+      children: [
+        if (message != null) ...[
+          Text('Message', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: AppConstants.backgroundColor,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Text(
+              message.body,
+              textDirection: _messageDirection(message.body),
+              style: _plainStyle,
+            ),
+          ),
+          const SizedBox(height: 22),
+        ],
+        Text(
+          'What happened to the money?',
+          style: Theme.of(context).textTheme.headlineSmall,
+        ),
+        const SizedBox(height: 8),
+        const Text('Choose debit or credit for the message above.'),
+        const SizedBox(height: 18),
+        _ChoiceTile(
+          icon: Icons.north_east,
+          color: AppConstants.errorColor,
+          title: 'Debit',
+          subtitle: 'Money left the account',
+          onTap: () => _chooseType(SmsTemplateType.debit),
+        ),
+        const SizedBox(height: 10),
+        _ChoiceTile(
+          icon: Icons.south_west,
+          color: const Color(0xFF15803D),
+          title: 'Credit',
+          subtitle: 'Money entered the account',
+          onTap: () => _chooseType(SmsTemplateType.credit),
+        ),
+      ],
+    );
+  }
+
+  Widget _moneyPhase() {
+    final message = _message;
+    final parsed = _parsedAmount();
+    return Column(
+      children: [
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+            children: [
+              if (_type != null) ...[_typeBanner(), const SizedBox(height: 14)],
+              Text(
+                'Choose the money',
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Green numbers are tappable. After you tap one, choose whether it is the amount or the balance.',
+              ),
+              const SizedBox(height: 16),
+              if (message != null)
+                _MessageCard(
+                  text: message.body,
+                  mode: _MarkMode.money,
+                  moneyRange: _amount,
+                  onPick: _pickMoney,
+                ),
+              if (parsed != null) ...[
+                const SizedBox(height: 14),
+                Text(
+                  _moneyKind == SmsPlaceholderKind.balance
+                      ? 'Account balance · ${parsed.toStringAsFixed(2)}'
+                      : 'Transaction amount · ${parsed.toStringAsFixed(2)}',
+                  style: const TextStyle(
+                    color: Color(0xFF15803D),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ],
+            ],
+          ),
+        ),
+        _continueBar(
+          label: 'Continue',
+          onPressed: _amount == null
+              ? null
+              : () => _push(_WizardPhase.changing),
+        ),
+      ],
+    );
+  }
+
+  Widget _changingPhase() {
+    final message = _message;
+    final count = _changing.length;
+    return Column(
+      children: [
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+            children: [
+              if (_type != null) ...[_typeBanner(), const SizedBox(height: 14)],
+              Text(
+                'Which parts change?',
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Tap the boxed words that can be different in other messages. The green number stays the money you already chose. Words you leave unselected have to appear the same way next time.',
+              ),
+              const SizedBox(height: 16),
+              if (message != null)
+                _MessageCard(
+                  text: message.body,
+                  mode: _MarkMode.changing,
+                  moneyRange: _amount,
+                  selected: _changing,
+                  onPick: _toggleChanging,
+                ),
+              const SizedBox(height: 14),
+              Text(
+                count == 0
+                    ? 'No changing parts yet. Continue is fine if only the money changes.'
+                    : '$count changing part${count == 1 ? '' : 's'} selected',
+                style: const TextStyle(color: AppConstants.textSecondary),
+              ),
+            ],
+          ),
+        ),
+        _continueBar(
+          label: 'Continue',
+          onPressed: () => _push(_WizardPhase.askCategories),
+        ),
+      ],
+    );
+  }
+
+  Widget _askCategoriesPhase() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
+      children: [
+        Text(
+          'Categorize by a word?',
+          style: Theme.of(context).textTheme.headlineSmall,
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Optional. A word in the message can file that transfer under a category.',
+        ),
+        const SizedBox(height: 20),
+        FilledButton(
+          onPressed: () => _push(_WizardPhase.categories),
+          child: const Text('Choose words'),
+        ),
+        TextButton(
+          onPressed: () {
+            setState(() {
+              _wordCategories = const [];
+              _saveWordDictionary = false;
+            });
+            _push(_WizardPhase.preview);
+          },
+          child: const Text('Not now'),
+        ),
+      ],
+    );
+  }
+
+  Widget _previewPhase() {
+    final template = _buildTemplate();
+    final compiled = template == null
+        ? null
+        : SmsTemplateCompiler.compile(template);
+    final ready = _previewReady && compiled != null;
+    return Column(
+      children: [
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+            children: [
+              Text(
+                ready ? 'Preview' : 'Template needs a fix',
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              const SizedBox(height: 8),
+              if (_previewLoading)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 28),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else if (!ready)
+                const Text(
+                  'The marked money value does not read as a number. Go back and choose it again.',
+                )
+              else ...[
+                Text(
+                  'Matched ${_previewMatches.length} of $_previewTotal saved messages',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: AppConstants.primaryColor,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                if (_previewMatches.isEmpty)
+                  const Text(
+                    'No other saved message uses this format yet. You can still save it.',
+                  ),
+                for (final item in _previewMatches.take(3))
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppConstants.backgroundColor,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        item.body,
+                        textDirection: _messageDirection(item.body),
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+              ],
+            ],
+          ),
+        ),
+        if (ready)
+          _continueBar(
+            label: _saving ? 'Saving…' : 'Save template',
+            onPressed: _saving ? null : _save,
+          ),
+      ],
+    );
+  }
+
+  Widget _donePhase() {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(28, 24, 28, 16),
+        child: Column(
+          children: [
+            const Spacer(),
+            const Icon(
+              Icons.check_circle,
+              color: Color(0xFF15803D),
+              size: 76,
+            ),
+            const SizedBox(height: 18),
+            Text(
+              'Congratulations',
+              style: Theme.of(context).textTheme.headlineSmall,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'You have created a template.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 16, height: 1.4),
+            ),
+            const Spacer(),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: _closeCreated,
+                child: const Text('Done'),
+              ),
             ),
           ],
         ),
       ),
     );
-    if (save != true || compiled == null) return;
-    await SmsTemplateSyncService.instance.saveTaughtTemplate(
-      template: template,
-      message: message,
-    );
-    await _saveWordCategories();
-    if (!mounted) return;
-    Navigator.pop(context, true);
   }
+
+  Widget _typeBanner() {
+    final debit = _type == SmsTemplateType.debit;
+    final color = debit ? AppConstants.errorColor : const Color(0xFF15803D);
+    return Align(
+      alignment: AlignmentDirectional.centerStart,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: .12),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(
+          debit ? 'Debit' : 'Credit',
+          style: TextStyle(color: color, fontWeight: FontWeight.w700),
+        ),
+      ),
+    );
+  }
+
+  double? _parsedAmount() {
+    final message = _message;
+    final amount = _amount;
+    if (message == null || amount == null) return null;
+    return SmsAmountParser.parse(
+      message.body.substring(amount.start, amount.end),
+    );
+  }
+
+  Widget _continueBar({required String label, required VoidCallback? onPressed}) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+        child: SizedBox(
+          width: double.infinity,
+          child: FilledButton(onPressed: onPressed, child: Text(label)),
+        ),
+      ),
+    );
+  }
+}
+
+class _MessageCard extends StatelessWidget {
+  final String text;
+  final _MarkMode mode;
+  final SmsTextRange? moneyRange;
+  final List<SmsTextRange> selected;
+  final ValueChanged<SmsTextRange> onPick;
+
+  const _MessageCard({
+    required this.text,
+    required this.mode,
+    required this.onPick,
+    this.moneyRange,
+    this.selected = const [],
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Teach a template')),
-      body: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    final direction = _messageDirection(text);
+    final tokens = mode == _MarkMode.money
+        ? _tokenize(text)
+        : _mergeGlued(
+            text,
+            _tokenize(text),
+            mode == _MarkMode.changing ? moneyRange : null,
+          );
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppConstants.backgroundColor,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Directionality(
+        textDirection: direction,
+        child: Wrap(
+          spacing: 6,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            LinearProgressIndicator(
-              value: _progress,
-              borderRadius: BorderRadius.circular(20),
-            ),
-            const SizedBox(height: 14),
-            Text(_step, style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 18),
-            if (_message != null)
-              SizedBox(
-                width: double.infinity,
-                child: Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(18),
-                    child: Text(
-                      _message!.body,
-                      textDirection: _messageDirection(_message!.body),
-                      style: Theme.of(
-                        context,
-                      ).textTheme.bodyLarge?.copyWith(height: 1.55),
-                    ),
-                  ),
-                ),
+            for (final token in tokens)
+              _TokenView(
+                text: text,
+                token: token,
+                mode: mode,
+                money: _isMoneyToken(token, moneyRange),
+                picked: selected.any((item) => _overlap(item, token.range)),
+                onPick: onPick,
               ),
-            const Spacer(),
-            const Text(
-              'Each question opens separately. Closing the wizard does not save a partial template.',
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton(
-                onPressed: _running ? null : _runWizard,
-                child: const Text('Continue'),
-              ),
-            ),
           ],
         ),
       ),
@@ -726,98 +796,277 @@ class _SmsTemplateWizardPageState extends State<SmsTemplateWizardPage> {
   }
 }
 
-class _ChooseMessageSheet extends StatelessWidget {
-  final SmsTemplateBank bank;
-  final List<SmsTemplateStoredMessage> saved;
+class _TokenView extends StatelessWidget {
+  final String text;
+  final _Token token;
+  final _MarkMode mode;
+  final bool money;
+  final bool picked;
+  final ValueChanged<SmsTextRange> onPick;
 
-  const _ChooseMessageSheet({required this.bank, required this.saved});
+  const _TokenView({
+    required this.text,
+    required this.token,
+    required this.mode,
+    required this.money,
+    required this.picked,
+    required this.onPick,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return FractionallySizedBox(
-      heightFactor: .78,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
-            child: Text(
-              'Choose a real message',
-              style: Theme.of(context).textTheme.titleLarge,
+    final direction = Directionality.of(context);
+    final label = text.substring(token.start, token.end);
+    final chosen = money;
+    final tappable = switch (mode) {
+      _MarkMode.money => token.number,
+      _MarkMode.changing => !chosen,
+      _MarkMode.pick => true,
+    };
+    final boxed = mode != _MarkMode.money || token.number;
+    final core = boxed
+        ? _WordBox(
+            label: label,
+            textDirection: token.number
+                ? TextDirection.ltr
+                : _scriptDirection(label),
+            money: mode == _MarkMode.money && token.number && !chosen,
+            chosen: chosen && mode != _MarkMode.pick,
+            selected: picked && !chosen,
+            onTap: tappable ? () => onPick(token.range) : null,
+          )
+        : Text(
+            label,
+            textDirection: _scriptDirection(label),
+            style: _plainStyle,
+          );
+    if (token.prefix.isEmpty && token.suffix.isEmpty) return core;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        if (token.prefix.isNotEmpty)
+          Text(token.prefix, textDirection: direction, style: _plainStyle),
+        core,
+        if (token.suffix.isNotEmpty)
+          Text(token.suffix, textDirection: direction, style: _plainStyle),
+      ],
+    );
+  }
+}
+
+class _WordBox extends StatelessWidget {
+  final String label;
+  final TextDirection textDirection;
+  final bool money;
+  final bool chosen;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  const _WordBox({
+    required this.label,
+    required this.textDirection,
+    required this.money,
+    required this.chosen,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final Color background;
+    final Color foreground;
+    final Color border;
+    if (chosen) {
+      background = const Color(0xFF15803D);
+      foreground = Colors.white;
+      border = const Color(0xFF15803D);
+    } else if (money) {
+      background = const Color(0xFFDCFCE7);
+      foreground = const Color(0xFF166534);
+      border = const Color(0xFF86EFAC);
+    } else if (selected) {
+      background = AppConstants.primaryColor;
+      foreground = Colors.white;
+      border = AppConstants.primaryColor;
+    } else {
+      background = Colors.white;
+      foreground = AppConstants.textPrimary;
+      border = const Color(0xFFD1D5DB);
+    }
+    final child = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      child: Text(
+        label,
+        textDirection: textDirection,
+        style: TextStyle(
+          color: foreground,
+          fontWeight: FontWeight.w700,
+          fontSize: 16,
+        ),
+      ),
+    );
+    return Material(
+      color: background,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: border),
+      ),
+      child: onTap == null
+          ? child
+          : InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: onTap,
+              child: child,
+            ),
+    );
+  }
+}
+
+const _plainStyle = TextStyle(
+  color: AppConstants.textPrimary,
+  fontSize: 16,
+  height: 1.35,
+  fontWeight: FontWeight.w500,
+);
+
+class _MessagePhase extends StatefulWidget {
+  final SmsTemplateBank bank;
+  final SmsTemplateStoredMessage? suggested;
+  final VoidCallback onBrowseInbox;
+  final ValueChanged<SmsTemplateStoredMessage> onPick;
+
+  const _MessagePhase({
+    required this.bank,
+    required this.onBrowseInbox,
+    required this.onPick,
+    this.suggested,
+  });
+
+  @override
+  State<_MessagePhase> createState() => _MessagePhaseState();
+}
+
+class _MessagePhaseState extends State<_MessagePhase> {
+  List<SmsTemplateStoredMessage> _saved = const [];
+  bool _loading = true;
+
+  List<SmsTemplateStoredMessage> get _listed => [
+    for (final item in _saved)
+      if (item.hash != widget.suggested?.hash) item,
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final messages = await SmsTemplateMobileStore.instance.getMessages(
+      bankId: widget.bank.id,
+    );
+    if (!mounted) return;
+    setState(() {
+      _saved = messages;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+          child: Text(
+            'Choose a real message',
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+        ),
+        const Padding(
+          padding: EdgeInsets.fromLTRB(20, 8, 20, 0),
+          child: Text(
+            'Pick one example of the format you want to teach. Debit or credit comes next.',
+          ),
+        ),
+        if (widget.suggested != null)
+          ListTile(
+            contentPadding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+            title: Text(
+              widget.suggested!.body,
+              textDirection: _messageDirection(widget.suggested!.body),
+              maxLines: 4,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: const Text('Use this message'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => widget.onPick(widget.suggested!),
+          ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+          child: SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: widget.onBrowseInbox,
+              icon: const Icon(Icons.history),
+              label: const Text('Browse inbox'),
             ),
           ),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 20),
-            child: Text('Pick one example of the format you want to teach.'),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
-            child: SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: () async {
-                  final picked =
-                      await showModalBottomSheet<SmsTemplateStoredMessage>(
-                        context: context,
-                        isScrollControlled: true,
-                        showDragHandle: true,
-                        builder: (context) =>
-                            _PreviousMessagesSheet(bank: bank),
-                      );
-                  if (picked != null && context.mounted) {
-                    Navigator.pop(context, picked);
-                  }
-                },
-                icon: const Icon(Icons.history),
-                label: const Text('Browse inbox'),
-              ),
-            ),
-          ),
-          Expanded(
-            child: saved.isEmpty
-                ? const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(28),
-                      child: Text(
-                        'No saved messages yet. Browse the inbox and create a template from one message.',
-                        textAlign: TextAlign.center,
-                      ),
+        ),
+        Expanded(
+          child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : _listed.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(28),
+                    child: Text(
+                      widget.suggested == null
+                          ? 'No saved messages yet. Browse the inbox and create a template from one message.'
+                          : 'Or browse the inbox for a different message.',
+                      textAlign: TextAlign.center,
                     ),
-                  )
-                : ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
-                    itemCount: saved.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (context, index) => ListTile(
+                  ),
+                )
+              : ListView.separated(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
+                  itemCount: _listed.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    final message = _listed[index];
+                    return ListTile(
                       title: Text(
-                        saved[index].body,
-                        textDirection: _messageDirection(saved[index].body),
+                        message.body,
+                        textDirection: _messageDirection(message.body),
                         maxLines: 4,
                         overflow: TextOverflow.ellipsis,
                       ),
                       subtitle: Text(
-                        DateFormat('d MMM, HH:mm').format(saved[index].date),
+                        DateFormat('d MMM, HH:mm').format(message.date),
                       ),
-                      onTap: () => Navigator.pop(context, saved[index]),
-                    ),
-                  ),
-          ),
-        ],
-      ),
+                      onTap: () => widget.onPick(message),
+                    );
+                  },
+                ),
+        ),
+      ],
     );
   }
 }
 
-class _PreviousMessagesSheet extends StatefulWidget {
+class _InboxPhase extends StatefulWidget {
   final SmsTemplateBank bank;
+  final ValueChanged<SmsTemplateStoredMessage> onPick;
 
-  const _PreviousMessagesSheet({required this.bank});
+  const _InboxPhase({required this.bank, required this.onPick});
 
   @override
-  State<_PreviousMessagesSheet> createState() => _PreviousMessagesSheetState();
+  State<_InboxPhase> createState() => _InboxPhaseState();
 }
 
-class _PreviousMessagesSheetState extends State<_PreviousMessagesSheet> {
+class _InboxPhaseState extends State<_InboxPhase> {
   List<SmsTemplateStoredMessage> _messages = const [];
   bool _loading = false;
   bool _started = false;
@@ -861,191 +1110,86 @@ class _PreviousMessagesSheetState extends State<_PreviousMessagesSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return FractionallySizedBox(
-      heightFactor: .86,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+          child: Text(
+            'Inbox messages',
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+        ),
+        const Padding(
+          padding: EdgeInsets.fromLTRB(20, 8, 20, 0),
+          child: Text(
+            'Ten messages load at a time. A message is saved only after you create a template from it.',
+          ),
+        ),
+        if (_error != null && _messages.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
             child: Text(
-              'Inbox messages',
-              style: Theme.of(context).textTheme.titleLarge,
+              _error!,
+              style: const TextStyle(color: AppConstants.errorColor),
             ),
           ),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 20),
-            child: Text(
-              'Ten messages load at a time and stay in memory. A message is saved only after you create a template from it.',
-            ),
-          ),
-          if (_error != null && _messages.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-              child: Text(
-                _error!,
-                style: const TextStyle(color: AppConstants.errorColor),
-              ),
-            ),
-          if ((!_started || _loading) && _messages.isEmpty)
-            const Expanded(child: Center(child: CircularProgressIndicator()))
-          else if (_messages.isEmpty)
-            Expanded(
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(28),
-                  child: Text(
-                    _error ?? 'No messages from this bank were found.',
-                    textAlign: TextAlign.center,
-                    style: _error == null
-                        ? null
-                        : const TextStyle(color: AppConstants.errorColor),
-                  ),
+        if ((!_started || _loading) && _messages.isEmpty)
+          const Expanded(child: Center(child: CircularProgressIndicator()))
+        else if (_messages.isEmpty)
+          Expanded(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(28),
+                child: Text(
+                  _error ?? 'No messages from this bank were found.',
+                  textAlign: TextAlign.center,
+                  style: _error == null
+                      ? null
+                      : const TextStyle(color: AppConstants.errorColor),
                 ),
               ),
-            )
-          else
-            Expanded(
-              child: ListView.separated(
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-                itemCount: _messages.length + (_hasMore ? 1 : 0),
-                separatorBuilder: (_, _) => const Divider(height: 1),
-                itemBuilder: (context, index) {
-                  if (index == _messages.length) {
-                    return Padding(
-                      padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
-                      child: OutlinedButton(
-                        onPressed: _loading ? null : _loadMore,
-                        child: _loading
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Text('Load more'),
-                      ),
-                    );
-                  }
-                  final message = _messages[index];
-                  return ListTile(
-                    title: Text(
-                      message.body,
-                      textDirection: _messageDirection(message.body),
-                      maxLines: 4,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Text(
-                      '${message.sender} • ${DateFormat('d MMM, HH:mm').format(message.date)}',
-                    ),
-                    onTap: () => Navigator.pop(context, message),
-                  );
-                },
-              ),
             ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MessageTokenWrap extends StatelessWidget {
-  final String text;
-  final List<SmsTextRange> selectableRanges;
-  final List<SmsTextRange> selectedRanges;
-  final ValueChanged<SmsTextRange> onTap;
-
-  const _MessageTokenWrap({
-    required this.text,
-    required this.selectableRanges,
-    required this.selectedRanges,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final textDirection = _messageDirection(text);
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxHeight: 300),
-      child: SingleChildScrollView(
-        child: Wrap(
-          textDirection: textDirection,
-          spacing: 6,
-          runSpacing: 7,
-          children: [
-            for (final range in selectableRanges)
-              Builder(
-                builder: (context) {
-                  final selected = selectedRanges.any(
-                    (item) =>
-                        (range.start >= item.start && range.end <= item.end) ||
-                        _same(item, range),
-                  );
-                  return Material(
-                    color: selected
-                        ? AppConstants.primaryColor
-                        : AppConstants.primarySurface,
-                    borderRadius: BorderRadius.circular(10),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(10),
-                      onTap: () => onTap(range),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 9,
-                        ),
-                        child: Text(
-                          text.substring(range.start, range.end),
-                          textDirection: textDirection,
-                          style: TextStyle(
-                            color: selected
-                                ? Colors.white
-                                : AppConstants.textPrimary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
+          )
+        else
+          Expanded(
+            child: ListView.separated(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+              itemCount: _messages.length + (_hasMore ? 1 : 0),
+              separatorBuilder: (_, _) => const Divider(height: 1),
+              itemBuilder: (context, index) {
+                if (index == _messages.length) {
+                  return Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
+                    child: OutlinedButton(
+                      onPressed: _loading ? null : _loadMore,
+                      child: _loading
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Load more'),
                     ),
                   );
-                },
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ChoiceTile extends StatelessWidget {
-  final IconData icon;
-  final Color color;
-  final String title;
-  final String subtitle;
-  final VoidCallback onTap;
-
-  const _ChoiceTile({
-    required this.icon,
-    required this.color,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        leading: CircleAvatar(
-          backgroundColor: color.withValues(alpha: .1),
-          child: Icon(icon, color: color),
-        ),
-        title: Text(title),
-        subtitle: Text(subtitle),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: onTap,
-      ),
+                }
+                final message = _messages[index];
+                return ListTile(
+                  title: Text(
+                    message.body,
+                    textDirection: _messageDirection(message.body),
+                    maxLines: 4,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: Text(
+                    '${message.sender} • ${DateFormat('d MMM, HH:mm').format(message.date)}',
+                  ),
+                  onTap: () => widget.onPick(message),
+                );
+              },
+            ),
+          ),
+      ],
     );
   }
 }
@@ -1066,17 +1210,22 @@ class _WordMapping {
   String get key => pattern?.key ?? word.toLowerCase();
 }
 
-class _WordCategorySheet extends StatefulWidget {
+class _WordCategoryEditor extends StatefulWidget {
   final String bankId;
   final String text;
+  final ValueChanged<List<_WordMapping>> onDone;
 
-  const _WordCategorySheet({required this.bankId, required this.text});
+  const _WordCategoryEditor({
+    required this.bankId,
+    required this.text,
+    required this.onDone,
+  });
 
   @override
-  State<_WordCategorySheet> createState() => _WordCategorySheetState();
+  State<_WordCategoryEditor> createState() => _WordCategoryEditorState();
 }
 
-class _WordCategorySheetState extends State<_WordCategorySheet> {
+class _WordCategoryEditorState extends State<_WordCategoryEditor> {
   List<_WordMapping> _mappings = const [];
   final List<SmsTextRange> _selected = [];
   bool _loading = true;
@@ -1175,157 +1324,250 @@ class _WordCategorySheetState extends State<_WordCategorySheet> {
 
   @override
   Widget build(BuildContext context) {
-    final words = _wordRanges(widget.text);
-    return FractionallySizedBox(
-      heightFactor: .86,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Word dictionary',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 7),
-            const Text(
-              'Select one or more words, then choose their category. The words can be separated; all selected positions must match.',
-            ),
-            const SizedBox(height: 16),
-            _MessageTokenWrap(
-              text: widget.text,
-              selectableRanges: words,
-              selectedRanges: _selected,
-              onTap: _toggle,
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.tonal(
-                onPressed: _selected.isEmpty ? null : _assignSelected,
-                child: Text(
-                  _selected.isEmpty
-                      ? 'Select words'
-                      : 'Categorize ${_selected.length} selected word${_selected.length == 1 ? '' : 's'}',
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: ListView(
+              children: [
+                Text(
+                  'Word dictionary',
+                  style: Theme.of(context).textTheme.headlineSmall,
                 ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Dictionary',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 8),
-            Expanded(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _mappings.isEmpty
-                  ? const Text('No words mapped yet. Done is ready either way.')
-                  : ListView.separated(
-                      itemCount: _mappings.length,
-                      separatorBuilder: (_, _) => const Divider(height: 1),
-                      itemBuilder: (context, index) {
-                        final item = _mappings[index];
-                        return ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(item.word),
-                          subtitle: Text(item.categoryName),
-                          trailing: IconButton(
-                            tooltip: 'Remove',
-                            onPressed: () {
-                              setState(() {
-                                _mappings = [
-                                  for (final mapping in _mappings)
-                                    if (mapping.key != item.key) mapping,
-                                ];
-                              });
-                            },
-                            icon: const Icon(Icons.close),
-                          ),
-                        );
-                      },
+                const SizedBox(height: 8),
+                const Text(
+                  'Select one or more boxed words, then choose their category.',
+                ),
+                const SizedBox(height: 16),
+                _MessageCard(
+                  text: widget.text,
+                  mode: _MarkMode.pick,
+                  selected: _selected,
+                  onPick: _toggle,
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.tonal(
+                    onPressed: _selected.isEmpty ? null : _assignSelected,
+                    child: Text(
+                      _selected.isEmpty
+                          ? 'Select words'
+                          : 'Categorize ${_selected.length} selected word${_selected.length == 1 ? '' : 's'}',
                     ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Dictionary',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                if (_loading)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                else if (_mappings.isEmpty)
+                  const Text('No words mapped yet. Done is ready either way.')
+                else
+                  for (final item in _mappings)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(item.word),
+                      subtitle: Text(item.categoryName),
+                      trailing: IconButton(
+                        tooltip: 'Remove',
+                        onPressed: () {
+                          setState(() {
+                            _mappings = [
+                              for (final mapping in _mappings)
+                                if (mapping.key != item.key) mapping,
+                            ];
+                          });
+                        },
+                        icon: const Icon(Icons.close),
+                      ),
+                    ),
+              ],
             ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: () => Navigator.pop(context, [..._mappings]),
-                child: const Text('Done'),
-              ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: () => widget.onDone([..._mappings]),
+              child: const Text('Done'),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 }
 
-bool _rangesOverlap(int aStart, int aEnd, int bStart, int bEnd) =>
-    aStart < bEnd && bStart < aEnd;
+class _ChoiceTile extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
 
-List<SmsTextRange> _numberRanges(String text) {
-  final expression = RegExp(
-    r'[0-9٠-٩۰-۹]+(?:[.,٬٫][0-9٠-٩۰-۹]+)*',
-    unicode: true,
-  );
-  return [
-    for (final match in expression.allMatches(text))
-      SmsTextRange(start: match.start, end: match.end),
-  ];
-}
+  const _ChoiceTile({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
 
-List<SmsTextRange> _wordRanges(String text) {
-  final expression = RegExp(r'[\p{L}\p{N}]+', unicode: true);
-  return [
-    for (final match in expression.allMatches(text))
-      SmsTextRange(start: match.start, end: match.end),
-  ];
-}
-
-List<SmsTextRange> _wordLikeRanges(String text) {
-  final expression = RegExp(r'[^\s]+', unicode: true);
-  final ranges = <SmsTextRange>[];
-  const edgePunctuation = '.,،;؛:!?()[]{}"“”';
-  for (final match in expression.allMatches(text)) {
-    var start = match.start;
-    var end = match.end;
-    while (start < end && edgePunctuation.contains(text[start])) {
-      start++;
-    }
-    while (end > start && edgePunctuation.contains(text[end - 1])) {
-      end--;
-    }
-    if (end > start) ranges.add(SmsTextRange(start: start, end: end));
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 8,
+        ),
+        leading: CircleAvatar(
+          backgroundColor: color.withValues(alpha: .1),
+          child: Icon(icon, color: color),
+        ),
+        title: Text(title),
+        subtitle: Text(subtitle),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: onTap,
+      ),
+    );
   }
-  return ranges;
 }
 
-bool _overlap(SmsTextRange a, SmsTextRange b) =>
-    a.start < b.end && b.start < a.end;
+class _Token {
+  final int start;
+  final int end;
+  final String prefix;
+  final String suffix;
+  final bool number;
 
-List<SmsTextRange> _mergeAdjacentRanges(
-  String text,
-  List<SmsTextRange> ranges,
-) {
-  final ordered = [...ranges]..sort((a, b) => a.start.compareTo(b.start));
-  final merged = <SmsTextRange>[];
-  for (final range in ordered) {
-    if (merged.isNotEmpty) {
-      final previous = merged.last;
-      final gap = text.substring(previous.end, range.start);
-      if (gap.trim().isEmpty) {
-        merged[merged.length - 1] = SmsTextRange(
-          start: previous.start,
-          end: range.end,
-        );
-        continue;
-      }
+  const _Token({
+    required this.start,
+    required this.end,
+    this.prefix = '',
+    this.suffix = '',
+    required this.number,
+  });
+
+  SmsTextRange get range => SmsTextRange(start: start, end: end);
+
+  _Token copyWith({String? prefix, String? suffix, int? end, bool? number}) {
+    return _Token(
+      start: start,
+      end: end ?? this.end,
+      prefix: prefix ?? this.prefix,
+      suffix: suffix ?? this.suffix,
+      number: number ?? this.number,
+    );
+  }
+}
+
+final _tokenPattern = RegExp(
+  r'[0-9٠-٩۰-۹]+(?:[.,٬٫][0-9٠-٩۰-۹]+)*|[\p{L}]+',
+  unicode: true,
+);
+
+final _numberTokenPattern = RegExp(
+  r'^[0-9٠-٩۰-۹]+(?:[.,٬٫][0-9٠-٩۰-۹]+)*$',
+  unicode: true,
+);
+
+List<_Token> _tokenize(String text) {
+  final tokens = <_Token>[];
+  var consumed = 0;
+  for (final match in _tokenPattern.allMatches(text)) {
+    final gap = text.substring(consumed, match.start);
+    final split = _splitGap(gap);
+    var prefix = split.trailing;
+    if (tokens.isEmpty) {
+      prefix = '${split.leading}${split.trailing}';
+    } else if (split.leading.isNotEmpty) {
+      final previous = tokens.removeLast();
+      tokens.add(previous.copyWith(suffix: '${previous.suffix}${split.leading}'));
     }
-    merged.add(range);
+    final value = match.group(0)!;
+    tokens.add(
+      _Token(
+        start: match.start,
+        end: match.end,
+        prefix: prefix,
+        number: _numberTokenPattern.hasMatch(value),
+      ),
+    );
+    consumed = match.end;
+  }
+  if (tokens.isNotEmpty && consumed < text.length) {
+    final split = _splitGap(text.substring(consumed));
+    final previous = tokens.removeLast();
+    tokens.add(
+      previous.copyWith(
+        suffix: '${previous.suffix}${split.leading}${split.trailing}',
+      ),
+    );
+  }
+  return tokens;
+}
+
+({String leading, String trailing}) _splitGap(String gap) {
+  var start = 0;
+  while (start < gap.length && gap[start].trim().isNotEmpty) {
+    start++;
+  }
+  var end = gap.length;
+  while (end > start && gap[end - 1].trim().isNotEmpty) {
+    end--;
+  }
+  return (leading: gap.substring(0, start), trailing: gap.substring(end));
+}
+
+List<_Token> _mergeGlued(String text, List<_Token> tokens, SmsTextRange? keep) {
+  final merged = <_Token>[];
+  for (final token in tokens) {
+    if (merged.isEmpty) {
+      merged.add(token);
+      continue;
+    }
+    final previous = merged.last;
+    final gap = text.substring(previous.end, token.start);
+    final glued = gap.isNotEmpty && RegExp(r'^[/:\-]+$').hasMatch(gap);
+    final blocked =
+        keep != null &&
+        (_overlap(previous.range, keep) || _overlap(token.range, keep));
+    if (!glued || blocked) {
+      merged.add(token);
+      continue;
+    }
+    merged[merged.length - 1] = _Token(
+      start: previous.start,
+      end: token.end,
+      prefix: previous.prefix,
+      suffix: token.suffix,
+      number: false,
+    );
   }
   return merged;
 }
+
+bool _isMoneyToken(_Token token, SmsTextRange? money) {
+  if (money == null || !token.number) return false;
+  return _overlap(token.range, money);
+}
+
+bool _rangesOverlap(int aStart, int aEnd, int bStart, int bEnd) =>
+    aStart < bEnd && bStart < aEnd;
+
+bool _overlap(SmsTextRange a, SmsTextRange b) =>
+    a.start < b.end && b.start < a.end;
 
 bool _same(SmsTextRange a, SmsTextRange b) =>
     a.start == b.start && a.end == b.end;
