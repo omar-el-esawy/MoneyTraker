@@ -1,7 +1,7 @@
 {
-  "version": "2.0.7",
-  "build_number": 8,
+  "version": "2.0.9",
+  "build_number": 10,
   "force_update": false,
-  "download_url": "https://github.com/omar-el-esawy/MoneyTraker/releases/download/v2.0.7/money_traker-v2.0.7.apk",
-  "changelog": "إصدار 2.0.7"
+  "download_url": "https://github.com/omar-el-esawy/MoneyTraker/releases/download/v2.0.9/money_traker-v2.0.9.apk",
+  "changelog": "من كارت الفلوس، الإضافة والخصم بقوا في صفحة تفاصيل بدل الديالوج. قوالب الرسائل فيها قاموس تصنيفات، وتقدر تتجاهل رسالة عشان متتعلمش منها، والمرسل مينفعش يبقى على بنكين. في الإشعارات تقدر ترجع تخطي التصنيف. رسم الرصيد بيكبّر ويتحرك أسهل وبيبدأ من آخر البيانات."
 }
