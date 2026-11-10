@@ -61,6 +61,18 @@ DateTime smsTemplateSyncAfter({
       : fromLastSync;
 }
 
+/// The message used to teach a template changes the balance only when it
+/// arrived on or after the day SMS Templates was first opened.
+bool smsTaughtMessageShouldApply({
+  required DateTime messageDate,
+  required DateTime? activatedAt,
+}) {
+  if (activatedAt == null) return false;
+  final start = DateTime(activatedAt.year, activatedAt.month, activatedAt.day);
+  final day = DateTime(messageDate.year, messageDate.month, messageDate.day);
+  return !day.isBefore(start);
+}
+
 class SmsTemplateSyncResult {
   final bool supported;
   final bool permissionGranted;
@@ -187,7 +199,8 @@ class SmsTemplateSyncService {
 
   /// Reads one page of matching inbox messages for teaching a template.
   /// Nothing is written here. The chosen message is stored only after a
-  /// template is saved from it.
+  /// template is saved from it. A sample from before SMS Templates was opened
+  /// is not applied to a balance.
   Future<SmsTemplateInboxPreview> previewInboxPage({
     required String bankId,
     required List<String> senders,
@@ -256,6 +269,10 @@ class SmsTemplateSyncService {
     required SmsTemplateStoredMessage message,
   }) async {
     await _store.saveTemplate(template);
+    final applyToBalance = smsTaughtMessageShouldApply(
+      messageDate: message.date,
+      activatedAt: await _store.activatedAt(),
+    );
     await _store.upsertMessage(
       SmsTemplateStoredMessage(
         hash: message.hash,
@@ -264,7 +281,9 @@ class SmsTemplateSyncService {
         body: message.body,
         date: message.date,
         bankId: template.bankId,
-        status: SmsTemplateMessageStatus.parsed,
+        status: applyToBalance
+            ? SmsTemplateMessageStatus.parsed
+            : SmsTemplateMessageStatus.sample,
         templateId: template.id,
         copiedAt: DateTime.now(),
       ),
@@ -345,6 +364,12 @@ class SmsTemplateSyncService {
       );
       final prior = previousByHash[hash];
       if (prior == null) copied++;
+
+      // Saved from a message older than the day SMS Templates was opened.
+      if (prior?.status == SmsTemplateMessageStatus.sample) {
+        seen.add(prior!);
+        continue;
+      }
 
       final duplicate = seen.any(
         (message) =>

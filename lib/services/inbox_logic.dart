@@ -235,6 +235,21 @@ InboxItem skipInboxCategory(InboxItem item) {
   );
 }
 
+/// Puts the category question back after the person chose no category.
+InboxItem undoInboxCategorySkip(InboxItem item) {
+  if (!item.categorySkipped) return item;
+  return item.copyWith(needsCategory: true, categorySkipped: false);
+}
+
+/// Drops a saved category and leaves the card as "no category".
+InboxItem clearInboxCategory(InboxItem item) {
+  return item.copyWith(
+    needsCategory: false,
+    categorySkipped: true,
+    clearChosenName: true,
+  );
+}
+
 List<InboxItem> capInbox(List<InboxItem> items) {
   if (items.length <= inboxItemLimit) return items;
   return items.take(inboxItemLimit).toList();

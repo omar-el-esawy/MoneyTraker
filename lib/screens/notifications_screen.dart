@@ -77,6 +77,46 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
+  Future<void> _undoSkip(InboxItem item) async {
+    if (_savingId != null) return;
+    setState(() => _savingId = item.id);
+    try {
+      await InboxStore.instance.undoCategorySkip(item.id);
+    } catch (e) {
+      debugPrint('Undoing no category failed: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _arabic ? 'متعذر التراجع.' : 'Could not undo that choice.',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _savingId = null);
+    }
+  }
+
+  Future<void> _clearCategory(InboxItem item) async {
+    if (_savingId != null) return;
+    setState(() => _savingId = item.id);
+    try {
+      await InboxStore.instance.clearCategory(item.id);
+    } catch (e) {
+      debugPrint('Clearing category failed: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _arabic ? 'متعذر حفظ الاختيار.' : 'Could not save that choice.',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _savingId = null);
+    }
+  }
+
   Future<void> _skip(InboxItem item) async {
     if (_savingId != null) return;
     setState(() => _savingId = item.id);
@@ -104,7 +144,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     try {
       final categories = await InboxStore.instance.categoriesFor(item);
       if (!mounted) return;
-      final choice = await showModalBottomSheet<SuggestedCategory>(
+      final choice = await showModalBottomSheet<_CategoryChoice>(
         context: context,
         showDragHandle: true,
         isScrollControlled: true,
@@ -115,7 +155,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           currentName: item.chosenName,
         ),
       );
-      if (choice != null && mounted) await _choose(item, choice);
+      if (!mounted || choice == null) return;
+      if (choice.clear) {
+        await _clearCategory(item);
+      } else if (choice.category != null) {
+        await _choose(item, choice.category!);
+      }
     } catch (e) {
       debugPrint('Category picker failed: $e');
       if (!mounted) return;
@@ -275,11 +320,21 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           ),
         ] else if (item.categorySkipped) ...[
           const SizedBox(height: 10),
-          Text(
-            arabic ? 'من غير تصنيف' : 'No category',
-            style: Theme.of(
-              context,
-            ).textTheme.labelLarge?.copyWith(color: AppConstants.textSecondary),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  arabic ? 'من غير تصنيف' : 'No category',
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: AppConstants.textSecondary,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: _savingId == null ? () => _undoSkip(item) : null,
+                child: Text(arabic ? 'تراجع' : 'Undo'),
+              ),
+            ],
           ),
         ] else if (item.needsCategory) ...[
           const SizedBox(height: 12),
@@ -385,6 +440,15 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 }
 
+class _CategoryChoice {
+  final SuggestedCategory? category;
+  final bool clear;
+
+  const _CategoryChoice.category(this.category) : clear = false;
+
+  const _CategoryChoice.clear() : category = null, clear = true;
+}
+
 class _CategoryPicker extends StatefulWidget {
   final bool arabic;
   final TagType type;
@@ -421,7 +485,12 @@ class _CategoryPickerState extends State<_CategoryPicker> {
       });
       return;
     }
-    Navigator.pop(context, SuggestedCategory(name: name, type: widget.type));
+    Navigator.pop(
+      context,
+      _CategoryChoice.category(
+        SuggestedCategory(name: name, type: widget.type),
+      ),
+    );
   }
 
   @override
@@ -453,7 +522,7 @@ class _CategoryPickerState extends State<_CategoryPicker> {
                 ),
               ],
               const SizedBox(height: 12),
-              if (widget.categories.isEmpty)
+              if (widget.categories.isEmpty && current == null)
                 Text(
                   arabic
                       ? 'مفيش تصنيفات محفوظة. اكتب اسم جديد.'
@@ -468,7 +537,18 @@ class _CategoryPickerState extends State<_CategoryPicker> {
                     for (final category in widget.categories)
                       ActionChip(
                         label: Text(category.name),
-                        onPressed: () => Navigator.pop(context, category),
+                        onPressed: () => Navigator.pop(
+                          context,
+                          _CategoryChoice.category(category),
+                        ),
+                      ),
+                    if (current != null)
+                      ActionChip(
+                        label: Text(arabic ? 'من غير تصنيف' : 'No category'),
+                        onPressed: () => Navigator.pop(
+                          context,
+                          const _CategoryChoice.clear(),
+                        ),
                       ),
                   ],
                 ),

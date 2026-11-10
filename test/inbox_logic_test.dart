@@ -234,8 +234,31 @@ void main() {
       expect(changed.chosenName, 'Gift');
       expect(skipInboxCategory(changed).chosenName, 'Gift');
       expect(skipInboxCategory(changed).categorySkipped, isFalse);
+
+      final undone = undoInboxCategorySkip(skipped);
+      expect(undone.categorySkipped, isFalse);
+      expect(undone.needsCategory, isTrue);
+      expect(undoInboxCategorySkip(changed).chosenName, 'Gift');
     },
   );
+
+  test('clearing a saved category leaves the card with no category', () {
+    final saved = InboxItem(
+      id: 'tx-10',
+      kind: InboxKind.transaction,
+      createdAt: now,
+      read: true,
+      debit: true,
+      needsCategory: false,
+      chosenName: 'Food',
+    );
+
+    final cleared = clearInboxCategory(saved);
+
+    expect(cleared.chosenName, isNull);
+    expect(cleared.categorySkipped, isTrue);
+    expect(cleared.needsCategory, isFalse);
+  });
 
   test('a category picker follows the transfer direction', () {
     final expense = InboxItem(

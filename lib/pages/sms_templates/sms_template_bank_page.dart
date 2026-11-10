@@ -638,6 +638,11 @@ class _MessageRow extends StatelessWidget {
         AppConstants.textTertiary,
         'Pending',
       ),
+      SmsTemplateMessageStatus.sample => (
+        Icons.school_outlined,
+        AppConstants.textTertiary,
+        'Example',
+      ),
     };
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),

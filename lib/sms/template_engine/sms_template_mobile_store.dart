@@ -60,7 +60,7 @@ class SmsTemplateBank {
   }
 }
 
-enum SmsTemplateMessageStatus { pending, parsed, unrecognized, duplicate }
+enum SmsTemplateMessageStatus { pending, parsed, unrecognized, duplicate, sample }
 
 class SmsTemplateStoredMessage {
   final String hash;

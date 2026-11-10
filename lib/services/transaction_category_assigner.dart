@@ -100,4 +100,31 @@ class TransactionCategoryAssigner {
     await _remember(id);
     return tag;
   }
+
+  Future<void> clear(TransactionEntity transaction) async {
+    final id = transaction.id;
+    if (id == null) {
+      throw StateError('Transaction has no id');
+    }
+    final previousTagId = transaction.categoryTagId;
+    if (previousTagId != null) {
+      final reversals = sumCategorySlices(
+        slicesFromTransaction(transaction),
+      ).entries.toList()..sort((a, b) => a.key.compareTo(b.key));
+      for (final reversal in reversals) {
+        await _adjustCategorizedAmount(
+          date: reversal.key,
+          tagId: previousTagId,
+          delta: -reversal.value,
+        );
+      }
+      await _setTransactionCategory(
+        id,
+        tagId: null,
+        amount: null,
+        allocations: null,
+      );
+    }
+    await _remember(id);
+  }
 }

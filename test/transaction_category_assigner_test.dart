@@ -124,4 +124,43 @@ void main() {
     expect(adjustments, 0);
     expect(writes, 0);
   });
+
+  test('clearing a category removes its allocation and writes nothing', () async {
+    final ledger = <int, double>{1: 150};
+    var wrote = false;
+    final assigner = TransactionCategoryAssigner.testing(
+      ensureTag: ({required name, required type}) async =>
+          Tag(id: 1, name: name, type: type),
+      adjustCategorizedAmount:
+          ({required date, required tagId, required delta}) async {
+            ledger[tagId] = (ledger[tagId] ?? 0) + delta;
+          },
+      setTransactionCategory: (id, {tagId, amount, allocations}) async {
+        wrote = true;
+        expect(tagId, isNull);
+        expect(amount, isNull);
+        expect(allocations, isNull);
+      },
+      remember: (id) async => expect(id, 7),
+    );
+
+    await assigner.clear(
+      TransactionEntity(
+        id: 7,
+        bank: 'CIB',
+        amount: 150,
+        type: TransactionType.debit,
+        date: day,
+        rawSms: 'Purchase for 150',
+        categoryTagId: 1,
+        categoryAmount: 150,
+        categoryAllocations: encodeCategoryAllocations([
+          SmsCategorySlice(day: day, delta: 150),
+        ]),
+      ),
+    );
+
+    expect(ledger[1], 0);
+    expect(wrote, isTrue);
+  });
 }

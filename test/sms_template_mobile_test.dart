@@ -456,6 +456,32 @@ void main() {
     expect(smsInboxSenderFilter(const [' ', '']), isNull);
   });
 
+  test('a taught message applies only after SMS Templates was opened', () {
+    final opened = DateTime(2026, 11, 8, 19, 40);
+
+    expect(
+      smsTaughtMessageShouldApply(
+        messageDate: DateTime(2026, 10, 1, 9),
+        activatedAt: opened,
+      ),
+      isFalse,
+    );
+    expect(
+      smsTaughtMessageShouldApply(
+        messageDate: DateTime(2026, 11, 8, 8),
+        activatedAt: opened,
+      ),
+      isTrue,
+    );
+    expect(
+      smsTaughtMessageShouldApply(
+        messageDate: DateTime(2026, 11, 10, 12),
+        activatedAt: null,
+      ),
+      isFalse,
+    );
+  });
+
   test(
     'only the taught message is stored, and inbox pages stay in memory',
     () async {
@@ -506,8 +532,167 @@ void main() {
       expect(saved, hasLength(1));
       expect(saved.single.body, body);
       expect(saved.single.templateId, template.id);
+      expect(saved.single.status, SmsTemplateMessageStatus.sample);
     },
   );
+
+  test('a taught example is not applied, but a later match still is', () async {
+    SharedPreferences.setMockInitialValues({
+      SmsTemplateMobileStore.enabledKey: true,
+    });
+    final money = MoneyStorage();
+    final moneyDb = await money.database;
+    await moneyDb.delete('money_source_changes');
+    await moneyDb.delete('money_sources');
+    final sourceId = await money.addMoneySource(
+      MoneySource(name: 'Taught card', amount: 1000),
+    );
+    final smsDb = await DatabaseHelper.instance.database;
+    for (final table in [
+      'sms_template_applications_v2',
+      'sms_template_messages_v2',
+      'sms_templates_v2',
+      'sms_template_banks_v2',
+      'transactions',
+    ]) {
+      await smsDb.delete(table);
+    }
+    const body = 'Debited 100 EGP successfully';
+    const template = SmsTemplate(
+      id: 'taught-template',
+      bankId: 'taught-bank',
+      sampleText: body,
+      type: SmsTemplateType.debit,
+      amount: SmsPlaceholder(
+        kind: SmsPlaceholderKind.amount,
+        range: SmsTextRange(start: 8, end: 11),
+      ),
+      directionRanges: [SmsTextRange(start: 0, end: 7)],
+    );
+    final sample = SmsTemplateStoredMessage(
+      hash: SmsHash.of(smsId: 'old-sms', sender: 'BANK', body: body),
+      smsId: 'old-sms',
+      sender: 'BANK',
+      body: body,
+      date: DateTime(2026, 10, 1, 9),
+      bankId: 'taught-bank',
+      status: SmsTemplateMessageStatus.pending,
+      copiedAt: DateTime(2026, 11, 10),
+    );
+    await SmsTemplateMobileStore.instance.saveBank(
+      SmsTemplateBank(
+        id: 'taught-bank',
+        name: 'Taught Bank',
+        senders: const ['BANK'],
+        sourceId: sourceId,
+        createdAt: DateTime(2026, 11, 10),
+      ),
+    );
+    await SmsTemplateMobileStore.instance.upsertMessage(
+      SmsTemplateStoredMessage(
+        hash: SmsHash.of(smsId: 'new-sms', sender: 'BANK', body: body),
+        smsId: 'new-sms',
+        sender: 'BANK',
+        body: body,
+        date: DateTime(2026, 11, 10, 12),
+        bankId: 'taught-bank',
+        status: SmsTemplateMessageStatus.unrecognized,
+        copiedAt: DateTime(2026, 11, 10),
+      ),
+    );
+
+    await SmsTemplateSyncService.instance.saveTaughtTemplate(
+      template: template,
+      message: sample,
+    );
+    final result = await SmsTemplateSyncService.instance.reprocessBank(
+      'taught-bank',
+    );
+    final source = (await money.getMoneySources()).single;
+    final savedSample = (await SmsTemplateMobileStore.instance.getMessages(
+      bankId: 'taught-bank',
+    )).firstWhere((message) => message.smsId == 'old-sms');
+
+    expect(result.applied, 1);
+    expect(source.amount, 900);
+    expect(savedSample.status, SmsTemplateMessageStatus.sample);
+    expect(
+      await SmsTemplateMobileStore.instance.hasApplication(sample.hash),
+      isFalse,
+    );
+  });
+
+  test('teaching from a message after SMS Templates opened applies it', () async {
+    final opened = DateTime(2026, 11, 8);
+    SharedPreferences.setMockInitialValues({
+      SmsTemplateMobileStore.enabledKey: true,
+      SmsTemplateMobileStore.activatedAtKey: opened.millisecondsSinceEpoch,
+    });
+    final money = MoneyStorage();
+    final moneyDb = await money.database;
+    await moneyDb.delete('money_source_changes');
+    await moneyDb.delete('money_sources');
+    final sourceId = await money.addMoneySource(
+      MoneySource(name: 'Opened card', amount: 1000),
+    );
+    final smsDb = await DatabaseHelper.instance.database;
+    for (final table in [
+      'sms_template_applications_v2',
+      'sms_template_messages_v2',
+      'sms_templates_v2',
+      'sms_template_banks_v2',
+      'transactions',
+    ]) {
+      await smsDb.delete(table);
+    }
+    const body = 'Debited 100 EGP successfully';
+    const template = SmsTemplate(
+      id: 'opened-template',
+      bankId: 'opened-bank',
+      sampleText: body,
+      type: SmsTemplateType.debit,
+      amount: SmsPlaceholder(
+        kind: SmsPlaceholderKind.amount,
+        range: SmsTextRange(start: 8, end: 11),
+      ),
+      directionRanges: [SmsTextRange(start: 0, end: 7)],
+    );
+    final message = SmsTemplateStoredMessage(
+      hash: SmsHash.of(smsId: 'today-sms', sender: 'BANK', body: body),
+      smsId: 'today-sms',
+      sender: 'BANK',
+      body: body,
+      date: DateTime(2026, 11, 10, 12),
+      bankId: 'opened-bank',
+      status: SmsTemplateMessageStatus.pending,
+      copiedAt: DateTime(2026, 11, 10),
+    );
+    await SmsTemplateMobileStore.instance.saveBank(
+      SmsTemplateBank(
+        id: 'opened-bank',
+        name: 'Opened Bank',
+        senders: const ['BANK'],
+        sourceId: sourceId,
+        createdAt: opened,
+      ),
+    );
+
+    await SmsTemplateSyncService.instance.saveTaughtTemplate(
+      template: template,
+      message: message,
+    );
+    final result = await SmsTemplateSyncService.instance.reprocessBank(
+      'opened-bank',
+    );
+    final source = (await money.getMoneySources()).single;
+
+    expect(result.applied, 1);
+    expect(source.amount, 900);
+    expect(
+      await SmsTemplateMobileStore.instance.hasApplication(message.hash),
+      isTrue,
+    );
+  });
 }
 
 Future<void> _waitForText(WidgetTester tester, String text) async {

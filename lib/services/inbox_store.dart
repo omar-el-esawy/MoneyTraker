@@ -186,6 +186,49 @@ class InboxStore extends ChangeNotifier {
     });
   }
 
+  Future<void> undoCategorySkip(String itemId) {
+    return _serial(() async {
+      if (!_loaded) {
+        await _read();
+        _loaded = true;
+      }
+      final index = items.indexWhere((item) => item.id == itemId);
+      if (index < 0) return;
+      final item = items[index];
+      final restored = undoInboxCategorySkip(item);
+      if (identical(restored, item)) return;
+      final next = [...items];
+      next[index] = restored;
+      items = next;
+      await _write();
+      notifyListeners();
+    });
+  }
+
+  Future<void> clearCategory(String itemId) {
+    return _serial(() async {
+      if (!_loaded) {
+        await _read();
+        _loaded = true;
+      }
+      final index = items.indexWhere((item) => item.id == itemId);
+      if (index < 0) return;
+      final item = items[index];
+      final transactionId = item.transactionId;
+      if (transactionId == null) return;
+      final transaction = await _db.getTransactionById(transactionId);
+      if (transaction == null) {
+        throw StateError('Transaction is no longer saved');
+      }
+      await TransactionCategoryAssigner.instance.clear(transaction);
+      final next = [...items];
+      next[index] = clearInboxCategory(item);
+      items = next;
+      await _write();
+      notifyListeners();
+    });
+  }
+
   Future<List<SuggestedCategory>> categoriesFor(InboxItem item) async {
     final type = categoryTypeFor(item);
     if (type == null) return const [];

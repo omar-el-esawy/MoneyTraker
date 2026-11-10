@@ -23,6 +23,7 @@ import 'package:money_traker/services/app_update.dart';
 import 'package:money_traker/services/backup_service.dart';
 import 'package:money_traker/services/inbox_store.dart';
 import 'package:money_traker/services/notification_service.dart';
+import 'package:money_traker/services/sms_template_sync_service.dart';
 import 'package:money_traker/services/sync_service.dart';
 import 'package:money_traker/tour/app_tour.dart';
 
@@ -663,6 +664,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     try {
       final before = await TransactionRepository.instance.getAll();
       await SyncService.instance.sync();
+      await SmsTemplateSyncService.instance.sync();
       final updated = await TransactionRepository.instance.getAll();
       final fresh = await InboxStore.instance.recordBankArrivals(
         updated,
