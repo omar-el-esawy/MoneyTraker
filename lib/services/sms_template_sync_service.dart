@@ -123,6 +123,14 @@ class SmsTemplateSyncResult {
   });
 
   static const unsupported = SmsTemplateSyncResult(supported: false);
+
+  String get statusMessage {
+    if (disabled) return 'Turn on SMS Templates before syncing.';
+    if (!supported) return 'SMS reading is available on Android only.';
+    if (!permissionGranted) return 'SMS permission was not granted.';
+    if (error != null && error!.isNotEmpty) return 'Sync failed: $error';
+    return '$applied applied • $unrecognized need teaching';
+  }
 }
 
 class SmsTemplateInboxPreview {
@@ -381,25 +389,12 @@ class SmsTemplateSyncService {
     var unrecognized = 0;
     var duplicates = 0;
     var missingSource = 0;
-    final incomingHashes = {
-      for (final item in inbox)
-        SmsHash.of(smsId: item.smsId, sender: item.sender, body: item.body),
-    };
-    final seen = [
-      for (final message in existingMessages)
-        if (!incomingHashes.contains(message.hash)) message,
-    ];
 
     for (final item in inbox) {
-      SmsTemplateBank? bank;
-      for (final candidate in banks) {
-        if (bankId != null && candidate.id != bankId) continue;
-        if (_senderMatches(item.sender, candidate.senders)) {
-          bank = candidate;
-          break;
-        }
-      }
-      if (bank == null) continue;
+      final matches = smsTemplateBanksForSender(banks, item.sender);
+      if (matches.length != 1) continue;
+      final bank = matches.single;
+      if (bankId != null && bank.id != bankId) continue;
 
       final hash = SmsHash.of(
         smsId: item.smsId,
@@ -411,28 +406,27 @@ class SmsTemplateSyncService {
 
       // Saved from a message older than the day SMS Templates was opened.
       if (prior?.status == SmsTemplateMessageStatus.sample) {
-        seen.add(prior!);
         continue;
       }
 
-      final duplicate = seen.any(
-        (message) =>
-            message.hash != hash &&
-            message.sender.trim().toLowerCase() ==
-                item.sender.trim().toLowerCase() &&
-            message.body == item.body &&
-            message.date.difference(item.date).abs() <=
-                const Duration(minutes: 2),
-      );
-      if (duplicate) {
-        duplicates++;
-        await _saveMessage(
-          item,
-          hash,
-          bank.id,
-          status: SmsTemplateMessageStatus.duplicate,
+      if (await _store.hasApplication(hash)) {
+        await _store.upsertMessage(
+          _storedMessage(
+            item,
+            hash,
+            bank.id,
+            status: SmsTemplateMessageStatus.parsed,
+            templateId: prior?.templateId,
+          ),
         );
-        seen.add(
+        continue;
+      }
+      final existingTransaction = await _db.getTransactionByHash(hash);
+      final templateOwnedTransaction =
+          existingTransaction?.ruleId?.startsWith('sms-template-v2:') == true;
+      if (existingTransaction != null && !templateOwnedTransaction) {
+        duplicates++;
+        await _store.upsertMessage(
           _storedMessage(
             item,
             hash,
@@ -443,58 +437,30 @@ class SmsTemplateSyncService {
         continue;
       }
 
-      if (await _store.hasApplication(hash)) {
-        final stored = _storedMessage(
-          item,
-          hash,
-          bank.id,
-          status: SmsTemplateMessageStatus.parsed,
-          templateId: prior?.templateId,
-        );
-        await _store.upsertMessage(stored);
-        seen.add(stored);
-        continue;
-      }
-      final existingTransaction = await _db.getTransactionByHash(hash);
-      final templateOwnedTransaction =
-          existingTransaction?.ruleId?.startsWith('sms-template-v2:') == true;
-      if (existingTransaction != null && !templateOwnedTransaction) {
-        duplicates++;
-        final stored = _storedMessage(
-          item,
-          hash,
-          bank.id,
-          status: SmsTemplateMessageStatus.duplicate,
-        );
-        await _store.upsertMessage(stored);
-        seen.add(stored);
-        continue;
-      }
-
       final result = sets[bank.id]?.match(item.body);
       if (result == null) {
         unrecognized++;
-        final stored = _storedMessage(
-          item,
-          hash,
-          bank.id,
-          status: SmsTemplateMessageStatus.unrecognized,
+        await _store.upsertMessage(
+          _storedMessage(
+            item,
+            hash,
+            bank.id,
+            status: SmsTemplateMessageStatus.unrecognized,
+          ),
         );
-        await _store.upsertMessage(stored);
-        seen.add(stored);
         continue;
       }
 
       parsed++;
-      final stored = _storedMessage(
-        item,
-        hash,
-        bank.id,
-        status: SmsTemplateMessageStatus.parsed,
-        templateId: result.templateId,
+      await _store.upsertMessage(
+        _storedMessage(
+          item,
+          hash,
+          bank.id,
+          status: SmsTemplateMessageStatus.parsed,
+          templateId: result.templateId,
+        ),
       );
-      await _store.upsertMessage(stored);
-      seen.add(stored);
       if (bank.sourceId == null) {
         missingSource++;
         continue;
@@ -670,6 +636,9 @@ class SmsTemplateSyncService {
       }
       final transaction = await _db.getTransactionByHash(application.smsHash);
       if (transaction?.ruleId?.startsWith('sms-template-v2:') == true) {
+        if (transaction!.categoryTagId != null) {
+          await TransactionCategoryAssigner.instance.clear(transaction);
+        }
         await _db.deleteTransactionByHash(application.smsHash);
       }
       return true;
@@ -677,24 +646,6 @@ class SmsTemplateSyncService {
       await _store.restoreActive(id);
       rethrow;
     }
-  }
-
-  Future<void> _saveMessage(
-    _InboxEnvelope item,
-    String hash,
-    String bankId, {
-    required SmsTemplateMessageStatus status,
-    String? templateId,
-  }) {
-    return _store.upsertMessage(
-      _storedMessage(
-        item,
-        hash,
-        bankId,
-        status: status,
-        templateId: templateId,
-      ),
-    );
   }
 
   SmsTemplateStoredMessage _storedMessage(
@@ -718,8 +669,11 @@ class SmsTemplateSyncService {
   }
 
   bool _senderMatches(String sender, List<String> configured) {
-    final candidate = sender.trim().toLowerCase();
-    return configured.any((item) => item.trim().toLowerCase() == candidate);
+    final candidate = smsTemplateNormalizedSender(sender);
+    if (candidate.isEmpty) return false;
+    return configured.any(
+      (item) => smsTemplateNormalizedSender(item) == candidate,
+    );
   }
 }
 

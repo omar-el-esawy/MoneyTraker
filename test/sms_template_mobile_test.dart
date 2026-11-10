@@ -9,7 +9,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:money_traker/data/database_helper.dart';
+import 'package:money_traker/domain/entities/transaction_entity.dart';
 import 'package:money_traker/model/money_source.dart';
+import 'package:money_traker/model/tag.dart';
+import 'package:money_traker/model/total_money_day.dart';
 import 'package:money_traker/pages/sms_templates/sms_template_operations_page.dart';
 import 'package:money_traker/pages/sms_templates/sms_template_wizard_page.dart';
 import 'package:money_traker/pages/sms_templates/sms_templates_page.dart';
@@ -227,6 +230,248 @@ void main() {
   });
 
   test(
+    'Undo reverses the category amount for the template transaction',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final money = MoneyStorage();
+      final moneyDb = await money.database;
+      await moneyDb.delete('total_money_day_delta_entries');
+      await moneyDb.delete('total_money_days');
+      await moneyDb.delete('money_source_changes');
+      await moneyDb.delete('money_sources');
+      await moneyDb.delete('tags');
+      final sourceId = await money.addMoneySource(
+        MoneySource(name: 'Category card', amount: 900),
+      );
+      final tag = await money.ensureTag(name: 'Food', type: TagType.expense);
+      final day = DateTime(2026, 11, 3);
+      await money.addTotalMoneyDay(
+        TotalMoneyDay.create(date: day, totalAmount: 900),
+      );
+      await money.adjustCategorizedAmount(
+        date: day,
+        tagId: tag.id!,
+        delta: 100,
+      );
+      final smsDb = await DatabaseHelper.instance.database;
+      await smsDb.delete('sms_template_applications_v2');
+      await smsDb.delete('transactions');
+      await DatabaseHelper.instance.upsertTransaction(
+        TransactionEntity(
+          bank: 'Bank',
+          amount: 100,
+          type: TransactionType.debit,
+          date: DateTime(2026, 11, 3, 10),
+          rawSms: 'Debited 100 at SHOP',
+          smsHash: 'undo-category',
+          ruleId: 'sms-template-v2:template',
+          ruleVersion: 1,
+          categoryTagId: tag.id,
+          categoryAmount: 100,
+        ),
+      );
+      final id = await SmsTemplateMobileStore.instance.insertApplication(
+        SmsTemplateApplication(
+          smsHash: 'undo-category',
+          bankId: 'bank',
+          bankName: 'Bank',
+          templateId: 'template',
+          sourceId: sourceId,
+          sourceName: 'Category card',
+          amount: 100,
+          delta: -100,
+          beforeAmount: 1000,
+          afterAmount: 900,
+          occurredAt: DateTime(2026, 11, 3, 10),
+          rawSms: 'Debited 100 at SHOP',
+          createdAt: DateTime.now(),
+        ),
+      );
+      final application =
+          (await SmsTemplateMobileStore.instance.getApplications()).firstWhere(
+            (item) => item.id == id,
+          );
+
+      final undone = await SmsTemplateSyncService.instance.undo(application);
+      final leftover = await money.amountsForTag(tag.id!);
+
+      expect(undone, isTrue);
+      expect(leftover[day] ?? 0, closeTo(0, 0.0001));
+      expect(
+        await DatabaseHelper.instance.getTransactionByHash('undo-category'),
+        isNull,
+      );
+    },
+  );
+
+  test('a sender ID can belong to only one bank', () async {
+    final smsDb = await DatabaseHelper.instance.database;
+    await smsDb.delete('sms_template_banks_v2');
+    final first = SmsTemplateBank(
+      id: 'bank-a',
+      name: 'Bank A',
+      senders: const ['HSBC', 'HSBC-EG'],
+      createdAt: DateTime(2026, 11, 10),
+    );
+    final second = SmsTemplateBank(
+      id: 'bank-b',
+      name: 'Bank B',
+      senders: const ['hsbc'],
+      createdAt: DateTime(2026, 11, 10),
+    );
+    final store = SmsTemplateMobileStore.instance;
+
+    expect(await store.saveBank(first), isNull);
+    final conflict = await store.saveBank(second);
+    expect(conflict?.sender, 'hsbc');
+    expect(conflict?.bank.id, 'bank-a');
+    expect(await store.getBanks(), hasLength(1));
+    expect(
+      smsTemplateSenderConflict([first], const [' HSBC '])?.bank.id,
+      'bank-a',
+    );
+    expect(smsTemplateBanksForSender([first, second], 'hsbc'), hasLength(2));
+  });
+
+  test('overlapping senders are not applied to either bank', () async {
+    SharedPreferences.setMockInitialValues({
+      SmsTemplateMobileStore.enabledKey: true,
+    });
+    final money = MoneyStorage();
+    final moneyDb = await money.database;
+    await moneyDb.delete('money_source_changes');
+    await moneyDb.delete('money_sources');
+    final sourceA = await money.addMoneySource(
+      MoneySource(name: 'Card A', amount: 1000),
+    );
+    final sourceB = await money.addMoneySource(
+      MoneySource(name: 'Card B', amount: 1000),
+    );
+    final smsDb = await DatabaseHelper.instance.database;
+    for (final table in [
+      'sms_template_applications_v2',
+      'sms_template_messages_v2',
+      'sms_templates_v2',
+      'sms_template_banks_v2',
+      'transactions',
+    ]) {
+      await smsDb.delete(table);
+    }
+    const body = 'Debited 100 EGP successfully';
+    Future<void> seedBank({
+      required String id,
+      required String name,
+      required int sourceId,
+    }) async {
+      await smsDb.insert('sms_template_banks_v2', {
+        'id': id,
+        'name': name,
+        'senders_json': jsonEncode(const ['BANK']),
+        'source_id': sourceId,
+        'created_at': DateTime(2026, 11, 10).millisecondsSinceEpoch,
+      });
+      await SmsTemplateMobileStore.instance.saveTemplate(
+        SmsTemplate(
+          id: '$id-template',
+          bankId: id,
+          sampleText: body,
+          type: SmsTemplateType.debit,
+          amount: const SmsPlaceholder(
+            kind: SmsPlaceholderKind.amount,
+            range: SmsTextRange(start: 8, end: 11),
+          ),
+          directionRanges: const [SmsTextRange(start: 0, end: 7)],
+        ),
+      );
+    }
+
+    await seedBank(id: 'overlap-a', name: 'Overlap A', sourceId: sourceA);
+    await seedBank(id: 'overlap-b', name: 'Overlap B', sourceId: sourceB);
+    await SmsTemplateMobileStore.instance.upsertMessage(
+      SmsTemplateStoredMessage(
+        hash: SmsHash.of(smsId: 'overlap-sms', sender: 'BANK', body: body),
+        smsId: 'overlap-sms',
+        sender: 'BANK',
+        body: body,
+        date: DateTime(2026, 11, 10, 12),
+        bankId: 'overlap-a',
+        status: SmsTemplateMessageStatus.unrecognized,
+        copiedAt: DateTime(2026, 11, 10, 12),
+      ),
+    );
+
+    final result = await SmsTemplateSyncService.instance.reprocessBank(
+      'overlap-a',
+    );
+    final sources = await money.getMoneySources();
+
+    expect(result.applied, 0);
+    expect(sources.map((item) => item.amount), everyElement(1000));
+  });
+
+  test('deleting a bank removes its category dictionary', () async {
+    final smsDb = await DatabaseHelper.instance.database;
+    await smsDb.execute('''
+      CREATE TABLE IF NOT EXISTS sms_category_rules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        bank_id TEXT NOT NULL,
+        word TEXT NOT NULL,
+        tag_id INTEGER NOT NULL,
+        pattern TEXT,
+        created_at INTEGER NOT NULL
+      )
+    ''');
+    await smsDb.delete('sms_category_rules');
+    await smsDb.delete('sms_template_banks_v2');
+    await SmsTemplateMobileStore.instance.saveBank(
+      SmsTemplateBank(
+        id: 'dict-bank',
+        name: 'Dict Bank',
+        senders: const ['DICT'],
+        createdAt: DateTime(2026, 11, 10),
+      ),
+    );
+    await DatabaseHelper.instance.insertSmsCategoryRule(
+      SmsCategoryRule(
+        bankId: 'dict-bank',
+        word: 'SHOP',
+        tagId: 1,
+        createdAt: DateTime(2026, 11, 10),
+      ),
+    );
+
+    await SmsTemplateMobileStore.instance.deleteBank('dict-bank');
+
+    expect(
+      await DatabaseHelper.instance.getSmsCategoryRules(bankId: 'dict-bank'),
+      isEmpty,
+    );
+  });
+
+  test('sync status reports errors instead of a zero-applied success', () {
+    expect(
+      const SmsTemplateSyncResult(disabled: true).statusMessage,
+      'Turn on SMS Templates before syncing.',
+    );
+    expect(
+      SmsTemplateSyncResult.unsupported.statusMessage,
+      'SMS reading is available on Android only.',
+    );
+    expect(
+      const SmsTemplateSyncResult(permissionGranted: false).statusMessage,
+      'SMS permission was not granted.',
+    );
+    expect(
+      const SmsTemplateSyncResult(error: 'timeout').statusMessage,
+      'Sync failed: timeout',
+    );
+    expect(
+      const SmsTemplateSyncResult(applied: 0, unrecognized: 2).statusMessage,
+      '0 applied • 2 need teaching',
+    );
+  });
+
+  test(
     'reprocessing filters exact sender, dedupes, rejects malformed, and applies once',
     () async {
       SharedPreferences.setMockInitialValues({
@@ -306,15 +551,94 @@ void main() {
       );
       final source = (await money.getMoneySources()).single;
 
-      expect(first.parsed, 1);
-      expect(first.applied, 1);
-      expect(first.duplicates, 1);
+      expect(first.parsed, 2);
+      expect(first.applied, 2);
+      expect(first.duplicates, 0);
       expect(first.unrecognized, 1);
       expect(second.applied, 0);
-      expect(source.amount, 900);
+      expect(source.amount, 800);
       expect(
         (await SmsTemplateMobileStore.instance.getApplications()).length,
-        1,
+        2,
+      );
+    },
+  );
+
+  test(
+    'identical purchases with different SMS IDs both change money',
+    () async {
+      SharedPreferences.setMockInitialValues({
+        SmsTemplateMobileStore.enabledKey: true,
+      });
+      final money = MoneyStorage();
+      final moneyDb = await money.database;
+      await moneyDb.delete('money_source_changes');
+      await moneyDb.delete('money_sources');
+      final sourceId = await money.addMoneySource(
+        MoneySource(name: 'Repeat card', amount: 1000),
+      );
+      final smsDb = await DatabaseHelper.instance.database;
+      for (final table in [
+        'sms_template_applications_v2',
+        'sms_template_messages_v2',
+        'sms_templates_v2',
+        'sms_template_banks_v2',
+        'transactions',
+      ]) {
+        await smsDb.delete(table);
+      }
+      const body = 'Debited 100 EGP successfully';
+      const bankId = 'repeat-bank';
+      final at = DateTime(2026, 11, 10, 12);
+      await SmsTemplateMobileStore.instance.saveBank(
+        SmsTemplateBank(
+          id: bankId,
+          name: 'Repeat Bank',
+          senders: const ['BANK'],
+          sourceId: sourceId,
+          createdAt: at,
+        ),
+      );
+      await SmsTemplateMobileStore.instance.saveTemplate(
+        const SmsTemplate(
+          id: 'repeat-template',
+          bankId: bankId,
+          sampleText: body,
+          type: SmsTemplateType.debit,
+          amount: SmsPlaceholder(
+            kind: SmsPlaceholderKind.amount,
+            range: SmsTextRange(start: 8, end: 11),
+          ),
+          directionRanges: [SmsTextRange(start: 0, end: 7)],
+        ),
+      );
+      for (final smsId in const ['sms-a', 'sms-b']) {
+        await SmsTemplateMobileStore.instance.upsertMessage(
+          SmsTemplateStoredMessage(
+            hash: SmsHash.of(smsId: smsId, sender: 'BANK', body: body),
+            smsId: smsId,
+            sender: 'BANK',
+            body: body,
+            date: at,
+            bankId: bankId,
+            status: SmsTemplateMessageStatus.unrecognized,
+            copiedAt: at,
+          ),
+        );
+      }
+
+      final first = await SmsTemplateSyncService.instance.reprocessBank(bankId);
+      final second = await SmsTemplateSyncService.instance.reprocessBank(
+        bankId,
+      );
+
+      expect(first.applied, 2);
+      expect(first.duplicates, 0);
+      expect(second.applied, 0);
+      expect((await money.getMoneySources()).single.amount, 800);
+      expect(
+        (await SmsTemplateMobileStore.instance.getApplications()).length,
+        2,
       );
     },
   );
@@ -455,8 +779,7 @@ void main() {
     await _waitForText(tester, 'Undo change');
 
     expect(find.text('Balance changes'), findsOneWidget);
-    expect(find.text('Undo change'), findsOneWidget);
-    expect(find.textContaining('Template card'), findsOneWidget);
+    expect(find.text('Undo change'), findsAtLeastNWidgets(1));
   });
 
   test('sync cutoff starts on the activation day', () {

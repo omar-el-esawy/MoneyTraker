@@ -60,6 +60,55 @@ class SmsTemplateBank {
   }
 }
 
+class SmsSenderConflict {
+  final String sender;
+  final SmsTemplateBank bank;
+
+  const SmsSenderConflict({required this.sender, required this.bank});
+
+  String get message => '"$sender" is already used by ${bank.name}.';
+}
+
+String smsTemplateNormalizedSender(String sender) =>
+    sender.trim().toLowerCase();
+
+SmsSenderConflict? smsTemplateSenderConflict(
+  Iterable<SmsTemplateBank> banks,
+  Iterable<String> senders, {
+  String? excludingBankId,
+}) {
+  final wanted = <String, String>{};
+  for (final sender in senders) {
+    final trimmed = sender.trim();
+    if (trimmed.isEmpty) continue;
+    wanted[smsTemplateNormalizedSender(trimmed)] = trimmed;
+  }
+  if (wanted.isEmpty) return null;
+  for (final bank in banks) {
+    if (bank.id == excludingBankId) continue;
+    for (final existing in bank.senders) {
+      final key = smsTemplateNormalizedSender(existing);
+      final incoming = wanted[key];
+      if (incoming == null) continue;
+      return SmsSenderConflict(sender: incoming, bank: bank);
+    }
+  }
+  return null;
+}
+
+List<SmsTemplateBank> smsTemplateBanksForSender(
+  Iterable<SmsTemplateBank> banks,
+  String sender,
+) {
+  final key = smsTemplateNormalizedSender(sender);
+  if (key.isEmpty) return const [];
+  return [
+    for (final bank in banks)
+      if (bank.senders.any((item) => smsTemplateNormalizedSender(item) == key))
+        bank,
+  ];
+}
+
 enum SmsTemplateMessageStatus {
   pending,
   parsed,
@@ -282,13 +331,20 @@ class SmsTemplateMobileStore {
     return rows.map(SmsTemplateBank.fromMap).toList();
   }
 
-  Future<void> saveBank(SmsTemplateBank bank) async {
+  Future<SmsSenderConflict?> saveBank(SmsTemplateBank bank) async {
+    final conflict = smsTemplateSenderConflict(
+      await getBanks(),
+      bank.senders,
+      excludingBankId: bank.id,
+    );
+    if (conflict != null) return conflict;
     final db = await _db;
     await db.insert(
       'sms_template_banks_v2',
       bank.toMap(),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+    return null;
   }
 
   Future<void> deleteBank(String bankId) async {
@@ -301,6 +357,11 @@ class SmsTemplateMobileStore {
       );
       await txn.delete(
         'sms_template_messages_v2',
+        where: 'bank_id = ?',
+        whereArgs: [bankId],
+      );
+      await txn.delete(
+        'sms_category_rules',
         where: 'bank_id = ?',
         whereArgs: [bankId],
       );

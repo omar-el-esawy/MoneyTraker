@@ -124,18 +124,9 @@ class _SmsTemplatesPageState extends State<SmsTemplatesPage> {
     setState(() => _busy = false);
     await _load();
     if (!mounted) return;
-    final text = switch (result) {
-      SmsTemplateSyncResult(disabled: true) =>
-        'Turn on SMS Templates before syncing.',
-      SmsTemplateSyncResult(supported: false) =>
-        'SMS reading is available on Android only.',
-      SmsTemplateSyncResult(permissionGranted: false) =>
-        'SMS permission was not granted.',
-      SmsTemplateSyncResult(error: final error?) => 'Sync failed: $error',
-      _ =>
-        '${result.applied} balance changes • ${result.unrecognized} need teaching',
-    };
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(result.statusMessage)));
   }
 
   Future<void> _addBank() async {
@@ -177,7 +168,14 @@ class _SmsTemplatesPageState extends State<SmsTemplatesPage> {
       sourceId: result.sourceId,
       createdAt: DateTime.now(),
     );
-    await _store.saveBank(bank);
+    final conflict = await _store.saveBank(bank);
+    if (conflict != null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(conflict.message)));
+      return;
+    }
     await _load();
     if (!mounted) return;
     await _openBank(bank);

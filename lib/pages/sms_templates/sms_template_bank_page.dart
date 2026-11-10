@@ -61,7 +61,14 @@ class _SmsTemplateBankPageState extends State<SmsTemplateBankPage> {
   }
 
   Future<void> _saveBank(SmsTemplateBank bank) async {
-    await _store.saveBank(bank);
+    final conflict = await _store.saveBank(bank);
+    if (conflict != null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(conflict.message)));
+      return;
+    }
     await _load();
   }
 
@@ -131,7 +138,21 @@ class _SmsTemplateBankPageState extends State<SmsTemplateBankPage> {
     );
     if (value == null ||
         value.isEmpty ||
-        bank.senders.any((item) => item.toLowerCase() == value.toLowerCase())) {
+        bank.senders.any(
+          (item) =>
+              smsTemplateNormalizedSender(item) ==
+              smsTemplateNormalizedSender(value),
+        )) {
+      return;
+    }
+    final conflict = smsTemplateSenderConflict(await _store.getBanks(), [
+      value,
+    ], excludingBankId: bank.id);
+    if (conflict != null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(conflict.message)));
       return;
     }
     await _saveBank(bank.copyWith(senders: [...bank.senders, value]));
@@ -191,14 +212,9 @@ class _SmsTemplateBankPageState extends State<SmsTemplateBankPage> {
     await _load();
     if (!mounted) return;
     setState(() => _busy = false);
-    final message = result.disabled
-        ? 'Turn on SMS Templates from the previous page first.'
-        : result.permissionGranted
-        ? '${result.applied} applied • ${result.unrecognized} need teaching'
-        : 'SMS permission was not granted.';
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    ).showSnackBar(SnackBar(content: Text(result.statusMessage)));
   }
 
   Future<void> _deleteTemplate(SmsTemplate template) async {
