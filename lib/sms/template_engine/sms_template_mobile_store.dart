@@ -115,6 +115,7 @@ enum SmsTemplateMessageStatus {
   unrecognized,
   duplicate,
   sample,
+  ignored,
 }
 
 class SmsTemplateStoredMessage {

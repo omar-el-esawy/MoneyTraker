@@ -408,6 +408,10 @@ class SmsTemplateSyncService {
       if (prior?.status == SmsTemplateMessageStatus.sample) {
         continue;
       }
+      // The user marked this message ignored. Keep it out of teaching.
+      if (prior?.status == SmsTemplateMessageStatus.ignored) {
+        continue;
+      }
 
       if (await _store.hasApplication(hash)) {
         await _store.upsertMessage(

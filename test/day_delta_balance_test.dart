@@ -53,15 +53,16 @@ void main() {
       expect(after.income, 0);
       expect(after.expenses, 150);
     });
-  });
 
-  test('opposite categories do not count as unallocated', () {
-    final unallocated = dayDeltaUnallocated(
-      delta: 200,
-      totalIncome: 200,
-      totalExpenses: 400,
-    );
+    test('uncategorized addition lands in green Others', () {
+      final balance = calculateDayDeltaAutoBalance(
+        delta: -200,
+        manualIncome: 0,
+        manualExpenses: 400,
+      );
 
-    expect(unallocated, 0);
+      expect(balance.income, 200);
+      expect(balance.expenses, 0);
+    });
   });
 }

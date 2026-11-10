@@ -564,6 +564,57 @@ void main() {
     },
   );
 
+  test('a manually ignored message stays out of teaching', () async {
+    SharedPreferences.setMockInitialValues({
+      SmsTemplateMobileStore.enabledKey: true,
+    });
+    final smsDb = await DatabaseHelper.instance.database;
+    for (final table in [
+      'sms_template_applications_v2',
+      'sms_template_messages_v2',
+      'sms_templates_v2',
+      'sms_template_banks_v2',
+      'transactions',
+    ]) {
+      await smsDb.delete(table);
+    }
+    const bankId = 'ignore-bank';
+    final at = DateTime(2026, 11, 10, 12);
+    await SmsTemplateMobileStore.instance.saveBank(
+      SmsTemplateBank(
+        id: bankId,
+        name: 'Ignore Bank',
+        senders: const ['BANK'],
+        sourceId: null,
+        createdAt: at,
+      ),
+    );
+    await SmsTemplateMobileStore.instance.upsertMessage(
+      SmsTemplateStoredMessage(
+        hash: SmsHash.of(
+          smsId: 'ad-1',
+          sender: 'BANK',
+          body: 'Your OTP is 123456',
+        ),
+        smsId: 'ad-1',
+        sender: 'BANK',
+        body: 'Your OTP is 123456',
+        date: at,
+        bankId: bankId,
+        status: SmsTemplateMessageStatus.ignored,
+        copiedAt: at,
+      ),
+    );
+
+    final result = await SmsTemplateSyncService.instance.reprocessBank(bankId);
+    final saved = await SmsTemplateMobileStore.instance.getMessages(
+      bankId: bankId,
+    );
+
+    expect(result.unrecognized, 0);
+    expect(saved.single.status, SmsTemplateMessageStatus.ignored);
+  });
+
   test(
     'identical purchases with different SMS IDs both change money',
     () async {

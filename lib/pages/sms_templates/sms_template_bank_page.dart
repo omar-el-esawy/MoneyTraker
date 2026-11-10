@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
+import 'package:intl/intl.dart' hide TextDirection;
 
 import 'package:money_traker/constants/app_constants.dart';
 import 'package:money_traker/data/database_helper.dart';
@@ -202,6 +202,51 @@ class _SmsTemplateBankPageState extends State<SmsTemplateBankPage> {
       await _load();
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _confirmIgnore(SmsTemplateStoredMessage message) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Ignore message?'),
+        content: const Text(
+          'It will leave the teaching list and will not be counted again.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Ignore'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await _setIgnored(message, true);
+  }
+
+  Future<void> _setIgnored(
+    SmsTemplateStoredMessage message,
+    bool ignored,
+  ) async {
+    await _store.upsertMessage(
+      SmsTemplateStoredMessage(
+        hash: message.hash,
+        smsId: message.smsId,
+        sender: message.sender,
+        body: message.body,
+        date: message.date,
+        bankId: message.bankId,
+        status: ignored
+            ? SmsTemplateMessageStatus.ignored
+            : SmsTemplateMessageStatus.unrecognized,
+        templateId: message.templateId,
+        copiedAt: message.copiedAt,
+      ),
+    );
+    await _load();
   }
 
   Future<void> _sync() async {
@@ -464,21 +509,65 @@ class _SmsTemplateBankPageState extends State<SmsTemplateBankPage> {
               Padding(
                 padding: const EdgeInsets.only(bottom: 9),
                 child: Card(
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.fromLTRB(16, 8, 10, 8),
-                    title: Text(
-                      message.body,
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 4, 4),
+                    child: Row(
+                      textDirection: TextDirection.ltr,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: InkWell(
+                            onTap: _busy ? null : () => _openWizard(message),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    message.body,
+                                    maxLines: 3,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    DateFormat(
+                                      'd MMM, HH:mm',
+                                    ).format(message.date),
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              tooltip: 'Teach',
+                              visualDensity: VisualDensity.compact,
+                              onPressed: _busy
+                                  ? null
+                                  : () => _openWizard(message),
+                              icon: const Icon(
+                                Icons.school_outlined,
+                                color: AppConstants.primaryColor,
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Ignore',
+                              visualDensity: VisualDensity.compact,
+                              onPressed: _busy
+                                  ? null
+                                  : () => _confirmIgnore(message),
+                              icon: const Icon(Icons.visibility_off_outlined),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
-                    subtitle: Text(
-                      DateFormat('d MMM, HH:mm').format(message.date),
-                    ),
-                    trailing: const Icon(
-                      Icons.school_outlined,
-                      color: AppConstants.primaryColor,
-                    ),
-                    onTap: () => _openWizard(message),
                   ),
                 ),
               ),
@@ -490,7 +579,12 @@ class _SmsTemplateBankPageState extends State<SmsTemplateBankPage> {
             )
           else
             for (final message in _messages.take(15))
-              _MessageRow(message: message),
+              _MessageRow(
+                message: message,
+                onUndoIgnore: message.status == SmsTemplateMessageStatus.ignored
+                    ? () => _setIgnored(message, false)
+                    : null,
+              ),
         ],
       ),
     );
@@ -645,8 +739,9 @@ class _StatusCard extends StatelessWidget {
 
 class _MessageRow extends StatelessWidget {
   final SmsTemplateStoredMessage message;
+  final VoidCallback? onUndoIgnore;
 
-  const _MessageRow({required this.message});
+  const _MessageRow({required this.message, this.onUndoIgnore});
 
   @override
   Widget build(BuildContext context) {
@@ -676,6 +771,11 @@ class _MessageRow extends StatelessWidget {
         AppConstants.textTertiary,
         'Example',
       ),
+      SmsTemplateMessageStatus.ignored => (
+        Icons.visibility_off_outlined,
+        AppConstants.textTertiary,
+        'Ignored',
+      ),
     };
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -704,6 +804,8 @@ class _MessageRow extends StatelessWidget {
                   ],
                 ),
               ),
+              if (onUndoIgnore != null)
+                TextButton(onPressed: onUndoIgnore, child: const Text('Undo')),
             ],
           ),
         ),

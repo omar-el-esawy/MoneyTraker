@@ -71,12 +71,6 @@ class _DayDeltaTaggingSheetState extends State<DayDeltaTaggingSheet> {
 
   double get _totalExpenses => _manualExpenseTotal + _autoExpense;
 
-  double get _unallocated => dayDeltaUnallocated(
-    delta: widget.delta,
-    totalIncome: _totalIncome,
-    totalExpenses: _totalExpenses,
-  );
-
   String _fmtAmount(double amount) => amount.toStringAsFixed(2);
 
   String _fmtSigned(double amount) {
@@ -505,37 +499,6 @@ class _DayDeltaTaggingSheetState extends State<DayDeltaTaggingSheet> {
               ),
             ],
           ),
-          if (_unallocated.abs() > 0.01) ...[
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFF3E0),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFFFFE0B2)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(
-                    Icons.warning_amber_rounded,
-                    size: 16,
-                    color: Color(0xFFE65100),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    widget.showAmounts
-                        ? 'Unallocated: ${_fmtSigned(_unallocated)}'
-                        : 'Unallocated: $kHiddenAmount',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: const Color(0xFFE65100),
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
         ],
       ),
     );
