@@ -11,6 +11,7 @@ import 'package:money_traker/pages/goals/goal_detail_view.dart';
 import 'package:money_traker/pages/goals/goals_page.dart';
 import 'package:money_traker/pages/goals/logic/goal_engine.dart';
 import 'package:money_traker/pages/widgets/amount_calculator_sheet.dart';
+import 'package:money_traker/pages/total_money/quick_adjustment_details_page.dart';
 import 'package:money_traker/pages/total_money/source_history_page.dart';
 import 'package:money_traker/tour/app_tour.dart';
 
@@ -622,184 +623,33 @@ class _TotalMoneyPageState extends State<TotalMoneyPage> {
 
     final type = isAdd ? TagType.income : TagType.expense;
     final tags = await _storage.getTags(type: type);
-    final categoryNames = tags.map((e) => e.name).toList()
-      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-
     if (!context.mounted) return null;
 
-    bool categorize = false;
-    bool customCategory = categoryNames.isEmpty;
-    String? selectedCategory = categoryNames.isEmpty
-        ? null
-        : categoryNames.first;
-    final categoryController = TextEditingController();
-    double? customCategoryAmount;
-    bool backdate = false;
-    DateTime selectedDate = DateTime.now();
-
-    final draft = await showDialog<_QuickAdjustmentDraft>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: Text(
-            isAdd ? 'Add to $sourceName' : 'Subtract from $sourceName',
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Amount: ${amount.toStringAsFixed(2)}'),
-                const SizedBox(height: 12),
-                CheckboxListTile(
-                  value: categorize,
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Categorize this change (optional)'),
-                  onChanged: (v) => setLocal(() => categorize = v ?? false),
-                ),
-                if (categorize) ...[
-                  const SizedBox(height: 8),
-                  if (categoryNames.isNotEmpty)
-                    DropdownButtonFormField<String>(
-                      initialValue: customCategory
-                          ? '__custom__'
-                          : selectedCategory,
-                      decoration: const InputDecoration(labelText: 'Category'),
-                      items: [
-                        ...categoryNames.map(
-                          (n) => DropdownMenuItem(value: n, child: Text(n)),
-                        ),
-                        const DropdownMenuItem(
-                          value: '__custom__',
-                          child: Text('Custom...'),
-                        ),
-                      ],
-                      onChanged: (v) {
-                        if (v == null) return;
-                        setLocal(() {
-                          customCategory = v == '__custom__';
-                          if (!customCategory) {
-                            selectedCategory = v;
-                          }
-                        });
-                      },
-                    ),
-                  if (customCategory) ...[
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: categoryController,
-                      decoration: const InputDecoration(
-                        labelText: 'Category name',
-                      ),
-                      autofocus: categoryNames.isEmpty,
-                    ),
-                  ],
-                  const SizedBox(height: 12),
-                  InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () async {
-                      final v = await showAmountCalculatorSheet(
-                        ctx,
-                        title: 'Category amount',
-                        initialValue: customCategoryAmount,
-                        maxAmount: amount,
-                        allowZero: false,
-                      );
-                      if (v == null) return;
-                      setLocal(() => customCategoryAmount = v);
-                    },
-                    child: InputDecorator(
-                      decoration: const InputDecoration(
-                        labelText: 'Category amount (optional)',
-                        border: OutlineInputBorder(),
-                      ),
-                      child: Text(
-                        customCategoryAmount == null
-                            ? 'Tap to set (defaults to full amount)'
-                            : customCategoryAmount!.toStringAsFixed(2),
-                        style: TextStyle(
-                          color: customCategoryAmount == null
-                              ? Theme.of(ctx).hintColor
-                              : Theme.of(ctx).textTheme.bodyLarge?.color,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                CheckboxListTile(
-                  value: backdate,
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Log this change to a different date'),
-                  subtitle: const Text(
-                    'Choose if this was a late entry (backdate)',
-                  ),
-                  onChanged: (v) => setLocal(() => backdate = v ?? false),
-                ),
-                if (backdate) ...[
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          DateFormat('yyyy-MM-dd').format(selectedDate),
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.calendar_today),
-                        onPressed: () async {
-                          final now = DateTime.now();
-                          final picked = await showDatePicker(
-                            context: ctx,
-                            initialDate: selectedDate,
-                            firstDate: DateTime(now.year - 3),
-                            lastDate: DateTime(now.year, now.month, now.day),
-                          );
-                          if (picked != null)
-                            setLocal(() => selectedDate = picked);
-                        },
-                      ),
-                    ],
-                  ),
-                ],
-              ],
+    final details = await Navigator.of(context)
+        .push<QuickAdjustmentDetailsResult>(
+          MaterialPageRoute(
+            builder: (_) => QuickAdjustmentDetailsPage(
+              isAdd: isAdd,
+              sourceName: sourceName,
+              amount: amount,
+              categories: tags,
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                String? categoryName;
-                if (categorize) {
-                  categoryName = customCategory
-                      ? categoryController.text.trim()
-                      : selectedCategory;
-                  if (categoryName == null || categoryName.isEmpty) return;
-                }
+        );
+    if (details == null) return null;
 
-                Navigator.of(ctx).pop(
-                  _QuickAdjustmentDraft(
-                    amount: amount,
-                    categoryName: categoryName,
-                    categoryAmount: categorize
-                        ? (customCategoryAmount ?? amount)
-                        : null,
-                    effectiveDate: backdate ? selectedDate : null,
-                  ),
-                );
-              },
-              child: const Text('Save'),
-            ),
-          ],
-        ),
-      ),
+    final now = DateTime.now();
+    final isToday =
+        details.selectedDate.year == now.year &&
+        details.selectedDate.month == now.month &&
+        details.selectedDate.day == now.day;
+
+    return _QuickAdjustmentDraft(
+      amount: amount,
+      categoryName: details.categoryName,
+      categoryAmount: details.categoryName == null ? null : amount,
+      effectiveDate: isToday ? null : details.selectedDate,
     );
-
-    categoryController.dispose();
-    return draft;
   }
 
   Future<void> _showQuickActionsSheet(
